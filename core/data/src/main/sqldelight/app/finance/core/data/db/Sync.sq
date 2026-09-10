@@ -1,0 +1,45 @@
+-- Готовность к будущей синхронизации (SPEC.md §7). Таблицы создаются сразу:
+-- запись в outbox обязана попадать в ту же транзакцию, что и мутация, иначе
+-- будущий серверный режим потребует переписывания слоя данных.
+CREATE TABLE sync_outbox (
+    change_id TEXT NOT NULL PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    row_version INTEGER NOT NULL,
+    occurred_at_utc INTEGER NOT NULL,
+    payload_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    synced_at_utc INTEGER,
+    UNIQUE(entity_type, entity_id, row_version)
+);
+
+CREATE INDEX idx_outbox_status ON sync_outbox(status, occurred_at_utc);
+
+CREATE TABLE sync_state (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at_utc INTEGER NOT NULL
+);
+
+enqueue:
+INSERT INTO sync_outbox (
+    change_id, entity_type, entity_id, operation, row_version,
+    occurred_at_utc, payload_hash, status
+) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending');
+
+selectPending:
+SELECT * FROM sync_outbox WHERE status = 'pending' ORDER BY occurred_at_utc LIMIT ?;
+
+countPending:
+SELECT COUNT(*) FROM sync_outbox WHERE status = 'pending';
+
+markSynced:
+UPDATE sync_outbox SET status = 'synced', synced_at_utc = ? WHERE change_id = ?;
+
+stateValue:
+SELECT value FROM sync_state WHERE key = ?;
+
+upsertState:
+INSERT OR REPLACE INTO sync_state (key, value, updated_at_utc)
+VALUES (?, ?, ?);

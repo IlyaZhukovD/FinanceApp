@@ -1,0 +1,62 @@
+CREATE TABLE category_month (
+    id TEXT NOT NULL PRIMARY KEY,
+    section TEXT NOT NULL,
+    category_id TEXT NOT NULL REFERENCES category(id),
+    period INTEGER NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'RUB',
+    comment TEXT,
+    created_at_utc INTEGER NOT NULL,
+    updated_at_utc INTEGER NOT NULL,
+    row_version INTEGER NOT NULL DEFAULT 1,
+    deleted_at_utc INTEGER
+);
+
+-- Одна живая ячейка на пару (категория, месяц). Индекс частичный: удалённую
+-- soft-delete ячейку можно завести заново (SPEC.md §6, D-02).
+CREATE UNIQUE INDEX uq_category_month_active
+    ON category_month(category_id, period) WHERE deleted_at_utc IS NULL;
+
+CREATE INDEX idx_category_month_period ON category_month(section, period);
+
+selectById:
+SELECT * FROM category_month WHERE id = ?;
+
+selectByCategoryAndPeriod:
+SELECT *
+FROM category_month
+WHERE category_id = ? AND period = ? AND deleted_at_utc IS NULL;
+
+selectForPeriod:
+SELECT *
+FROM category_month
+WHERE section = ? AND period = ? AND deleted_at_utc IS NULL
+ORDER BY amount_minor DESC;
+
+selectByCategory:
+SELECT *
+FROM category_month
+WHERE category_id = ? AND deleted_at_utc IS NULL
+ORDER BY period;
+
+selectForRange:
+SELECT *
+FROM category_month
+WHERE section = ? AND period >= ? AND period <= ? AND deleted_at_utc IS NULL
+ORDER BY period, amount_minor DESC;
+
+countAll:
+SELECT COUNT(*) FROM category_month;
+
+insert:
+INSERT INTO category_month (
+    id, section, category_id, period, amount_minor, currency, comment,
+    created_at_utc, updated_at_utc, row_version, deleted_at_utc
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Один запрос на все изменяемые поля, включая tombstone: доменный updateCell
+-- покрывает и правку суммы/комментария, и удаление, и восстановление.
+update:
+UPDATE category_month
+SET amount_minor = ?, currency = ?, comment = ?, deleted_at_utc = ?, updated_at_utc = ?, row_version = ?
+WHERE id = ?;

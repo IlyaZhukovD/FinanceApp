@@ -1,0 +1,22 @@
+-- Настройки приложения. Значения сериализуются в Kotlin (AppSettings), поэтому
+-- здесь осознанно простая схема key-value: типизация живёт в коде, а не в БД.
+CREATE TABLE app_setting (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at_utc INTEGER NOT NULL
+);
+
+selectAll:
+SELECT * FROM app_setting ORDER BY key;
+
+selectByKey:
+SELECT value FROM app_setting WHERE key = ?;
+
+-- Для key-value таблицы без дочерних строк INSERT OR REPLACE безопасен и не требует
+-- upsert-синтаксиса, который парсер SQLDelight 2.3.2 не принимает.
+upsert:
+INSERT OR REPLACE INTO app_setting (key, value, updated_at_utc)
+VALUES (?, ?, ?);
+
+delete:
+DELETE FROM app_setting WHERE key = ?;

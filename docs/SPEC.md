@@ -1,0 +1,643 @@
+# Finance — техническое задание (v1.1)
+
+Единый источник правды для реализации. Статус: согласовано с владельцем продукта.
+Изменения в этот файл вносятся вместе с записью в `docs/DECISIONS.md`.
+
+---
+
+## 1. Цель и рамки
+
+**Цель.** Офлайн-десктоп-приложение для одного пользователя (macOS + Windows) для учёта
+расходов, доходов и активов с гранулярностью «месяц + год», с аналитикой и графиками,
+бэкапом в папку Яндекс.Диска и AI-разбором показателей через OpenRouter.
+
+**Не цели v1.** Мобильные и веб-версии, серверный бэкенд (только интерфейсы и готовность
+схемы), мультипользовательский доступ, тёмная тема, авторизация/логин, банковские
+интеграции, дневная гранулярность, теги, бюджеты, мультивалютность, шифрование данных,
+PIN-лок.
+
+**Принципы.**
+1. Local-first: приложение полностью работоспособно без сети.
+2. Никакой потери данных: каждая мутация транзакционна, обратима и протоколируется.
+3. Keyboard-first: десктопный UX, плотные таблицы, горячие клавиши.
+4. Только светлая тема.
+5. Бизнес-логика — в Kotlin-ядре; UI тонкий; SQL только как хранение.
+6. Готовность к будущему серверному режиму без переписывания (UUID, tombstones,
+   `row_version`, `sync_outbox`, флаг `NetworkMode`).
+
+---
+
+## 2. Нейминг
+
+| Что | Значение |
+|---|---|
+| Название продукта / окна / установщика | `Finance` |
+| Root Gradle-проект | `finance` |
+| Пакет и bundle id | `app.finance` |
+| Каталог данных (macOS) | `~/Library/Application Support/app.finance/` |
+| Каталог данных (Windows) | `%APPDATA%\app.finance\` |
+| Файл БД | `finance.db` (+ `-wal`, `-shm` в рабочем режиме) |
+| Подкаталоги данных | `backups/`, `logs/`, `settings.json` |
+| Папка на Яндекс.Диске | указывает пользователь; рекомендуется `Finance/backups` |
+| Снапшот бэкапа | `Finance-<UTC-ISO>-v<schemaVersion>.db` + `.sha256` |
+| Манифест бэкапов | `Finance-manifest.json`, указатель `LATEST` |
+| Артефакты | `Finance-1.0.0.dmg`, `Finance-1.0.0.msi` |
+| Версия приложения / схемы БД | `1.0.0` / `v1` (независимые номера) |
+
+---
+
+## 3. Стек и зафиксированные версии
+
+| Слой | Технология | Версия |
+|---|---|---|
+| Язык | Kotlin (JVM) | 2.4.20 |
+| UI | Compose Multiplatform for Desktop, Material 3 `lightColorScheme` | 1.12.0 |
+| Локальная БД | SQLite через SQLDelight (WAL, `foreign_keys=ON`) | 2.3.2 |
+| JVM target | 21 | — |
+| Сеть | Ktor Client (CIO) | пин при первой необходимости |
+| JSON | kotlinx.serialization | пин при первой необходимости |
+| DI | ручная сборка графа (`AppGraph`) в v1; Koin — только если граф разрастётся | — |
+| Тесты | JUnit 5, kotlin.test, Turbine, SQLDelight in-memory driver | пин при добавлении |
+| Линт | ktlint/spotless + detekt | пин при добавлении |
+| Дистрибуция | локальная сборка `packageDmg` (macOS) / `packageMsi` (Windows, WiX). **CI не используется** | — |
+
+Версии Kotlin / Compose / SQLDelight подтверждены по метаданным Maven Central.
+Совместимость пары «Compose Multiplatform ↔ Kotlin» проверяется первым же запуском
+сборки; при конфликте — откат на пару CMP 1.11.1 + Kotlin 2.3.21 с записью в DECISIONS.
+
+**Хранение: SQLite, а не локальный PostgreSQL.** Причины и границы решения — в
+`docs/DECISIONS.md`, D-01. PostgreSQL остаётся целевой БД будущей *серверной* части
+(режим `NetworkMode.ON`), доступ к нему — только через HTTPS API, не напрямую из
+десктопа.
+
+---
+
+## 4. Архитектура
+
+Gradle multi-module, зависимости строго вниз (UI → domain ← data):
+
+```
+core:model       чистые типы: Money, Period, LedgerSection, AssetKind, Category,
+                 CategoryMonth, Revision, AssetAccount, AssetSnapshot
+core:domain      use-case'ы и ИНТЕРФЕЙСЫ репозиториев/сервисов; не знает про SQL и Compose
+core:analytics   чистые функции расчёта серий и метрик (без БД и UI) — golden-тесты
+core:data        реализации репозиториев на SQLDelight, settings, Clock, UuidGenerator
+core:charts      Compose-графики на Canvas: StackedBar, GroupedBar, Line, Donut
+core:ui          дизайн-система: светлая тема, типографика, DataTable, панели, диалоги
+core:network     Ktor-клиенты: OpenRouter, будущий BackendApi, (позже) YandexDisk REST
+core:backup      снапшоты, checksum, манифест, retention, восстановление, backup_log
+feature:expenses раздел «Расходы»
+feature:income   раздел «Доходы»
+feature:assets   раздел «Активы»
+feature:analytics Аналитика + дашборд «Обзор»
+feature:ai       AI-чат, конструктор payload, расписания
+feature:settings Настройки, категории, бэкап, импорт/экспорт, флаги
+app:desktop      точка входа, граф зависимостей, навигация, окно, упаковка
+```
+
+**Правила слоёв.**
+- `core:domain` — только Kotlin и интерфейсы; ни SQL, ни Compose, ни Ktor.
+- Все мутации идут через use-case'ы и транзакции.
+- Временные зависимости инжектятся (`Clock`, `UuidGenerator`) — детерминированные тесты.
+- Корутины через инжектируемый диспетчер; `GlobalScope` и `runBlocking` вне `main` запрещены.
+- `Double`/`Float` для денег запрещены (правило detekt).
+
+**Ключевые контракты домена** (существование обязательно даже там, где v1 не реализует
+поведение — это и есть «интерфейсы для сетевого взаимодействия»):
+
+```kotlin
+enum class StorageMode { LOCAL_SQLITE, REMOTE_BACKEND }
+enum class NetworkMode { OFF, ON }              // фича-флаг из настроек
+enum class BackupTransport { LOCAL_FOLDER, YANDEX_API }   // в v1 реализован только LOCAL_FOLDER
+
+interface CategoryRepository
+interface LedgerRepository        // ячейки category_month + ревизии
+interface AssetRepository
+interface SettingsRepository
+interface SecretStore             // macOS Keychain / Windows Credential Manager + fallback
+interface BackupService
+interface AiGateway
+interface SyncTransport           // v1: NoOp; контракт для будущего серверного режима
+```
+
+`StoreFactory.create(config)` выбирает реализацию по `StorageMode`. В v1 ветка
+`REMOTE_BACKEND` возвращает понятную ошибку «серверный режим не реализован», но
+контракт существует и схема к нему готова.
+
+---
+
+## 5. Соглашения по данным
+
+- **Период.** `period INTEGER = year * 100 + month` (например `202602`). В домене
+  `Period(year, month)`. Диапазоны `[from, to]` включительно. Допустимый диапазон
+  `200001..210012`.
+- **Деньги.** `amount_minor INTEGER` (копейки) + `currency TEXT` (по умолчанию `RUB`).
+  В домене `Money(minor: Long, currency: String)`. Округление только при отображении
+  (`HALF_UP`, 2 знака). Плавающая точка запрещена.
+- **Время.** В БД только UTC epoch millis: `created_at_utc`, `updated_at_utc`.
+- **Одна строка на сущность в месяц.** Для расходов/доходов — ячейка
+  `(category_id, period)`; для активов — снапшот `(account_id, period)`.
+- **Отсутствующий месяц ≠ ноль.** Для расходов/доходов отсутствие ячейки legitimately
+  означает 0. Для активов пропуск месяца — это gap: в графиках он не рисуется нулём.
+- **Soft delete.** Доменные сущности не удаляются физически: `deleted_at_utc`.
+- **Локализация.** Интерфейс только RU; строки во внешних ресурсах, без хардкода.
+
+---
+
+## 6. Схема БД v1
+
+Переносимое подмножество SQL: без триггеров, хранимых процедур, экзотических типов.
+Миграции — только `.sqm`-файлы SQLDelight; созданные версии не правятся задним числом.
+
+```sql
+-- Категории: плоские, свои для каждой секции
+CREATE TABLE category (
+  id TEXT PRIMARY KEY NOT NULL,
+  section TEXT NOT NULL,               -- EXPENSE | INCOME | ASSET
+  name TEXT NOT NULL,
+  parent_id TEXT,                      -- зарезервировано, в v1 всегда NULL
+  color TEXT NOT NULL,                 -- '#RRGGBB'
+  icon TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_archived INTEGER NOT NULL DEFAULT 0,
+  created_at_utc INTEGER NOT NULL,
+  updated_at_utc INTEGER NOT NULL,
+  row_version INTEGER NOT NULL DEFAULT 1,
+  deleted_at_utc INTEGER
+);
+CREATE INDEX idx_category_section ON category(section, is_archived);
+
+-- Ячейка «категория + месяц»: поток (расход или доход)
+CREATE TABLE category_month (
+  id TEXT PRIMARY KEY NOT NULL,
+  section TEXT NOT NULL,               -- EXPENSE | INCOME
+  category_id TEXT NOT NULL REFERENCES category(id),
+  period INTEGER NOT NULL,             -- year*100+month
+  amount_minor INTEGER NOT NULL,       -- допускаются отрицательные (сторно/корректировка)
+  currency TEXT NOT NULL DEFAULT 'RUB',
+  comment TEXT,                        -- необязательный, многострочный
+  created_at_utc INTEGER NOT NULL,
+  updated_at_utc INTEGER NOT NULL,
+  row_version INTEGER NOT NULL DEFAULT 1,
+  deleted_at_utc INTEGER
+);
+-- Уникальность только для живых строк: иначе удалённую ячейку нельзя завести снова
+CREATE UNIQUE INDEX uq_category_month_active
+  ON category_month(category_id, period) WHERE deleted_at IS NULL;
+CREATE INDEX idx_category_month_period ON category_month(section, period);
+
+-- Append-only журнал изменений ячейки: undo, история, будущая синхронизация
+CREATE TABLE category_month_revision (
+  id TEXT PRIMARY KEY NOT NULL,
+  cell_id TEXT NOT NULL REFERENCES category_month(id),
+  op TEXT NOT NULL,                    -- CREATE|ADD|SET_AMOUNT|SET_COMMENT|DELETE|UNDELETE|DUPLICATE|IMPORT|UNDO
+  delta_minor INTEGER,
+  amount_before_minor INTEGER,
+  amount_after_minor INTEGER NOT NULL,
+  comment_before TEXT,
+  comment_after TEXT,
+  source TEXT NOT NULL,                -- MANUAL|IMPORT|DUPLICATE|UNDO
+  source_period INTEGER,               -- для DUPLICATE: месяц-источник
+  idempotency_key TEXT,                -- для импорта и будущей синхронизации
+  created_at_utc INTEGER NOT NULL
+);
+CREATE INDEX idx_revision_cell ON category_month_revision(cell_id, created_at_utc);
+
+-- Счета активов
+CREATE TABLE asset_account (
+  id TEXT PRIMARY KEY NOT NULL,
+  category_id TEXT NOT NULL REFERENCES category(id),  -- section = ASSET
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,                  -- DEPOSIT|BROKERAGE|FUND|IIS|CASH|CREDIT|REAL_ESTATE|OTHER
+  currency TEXT NOT NULL DEFAULT 'RUB',
+  opened_period INTEGER NOT NULL,
+  closed_period INTEGER,
+  annual_rate_bp INTEGER,              -- базисные пункты, для вкладов
+  note TEXT,
+  created_at_utc INTEGER NOT NULL,
+  updated_at_utc INTEGER NOT NULL,
+  row_version INTEGER NOT NULL DEFAULT 1,
+  deleted_at_utc INTEGER
+);
+
+-- Снапшот актива: остаток (stock), а не поток
+CREATE TABLE asset_snapshot (
+  id TEXT PRIMARY KEY NOT NULL,
+  account_id TEXT NOT NULL REFERENCES asset_account(id),
+  period INTEGER NOT NULL,
+  balance_minor INTEGER NOT NULL,      -- может быть отрицательным (CREDIT)
+  contribution_minor INTEGER,          -- взносы(+)/снятия(-) за месяц
+  note TEXT,
+  created_at_utc INTEGER NOT NULL,
+  updated_at_utc INTEGER NOT NULL,
+  row_version INTEGER NOT NULL DEFAULT 1,
+  deleted_at_utc INTEGER,
+  UNIQUE(account_id, period)
+);
+CREATE INDEX idx_snapshot_period ON asset_snapshot(period);
+
+-- Настройки (типизированный доступ из Kotlin)
+CREATE TABLE app_setting (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL,
+  updated_at_utc INTEGER NOT NULL
+);
+
+-- Журнал бэкапов
+CREATE TABLE backup_log (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at_utc INTEGER NOT NULL,
+  trigger TEXT NOT NULL,               -- APP_CLOSE|IDLE|MANUAL|POST_IMPORT|PRE_RESTORE|POST_MIGRATION|STARTUP_DIRTY
+  transport TEXT NOT NULL,             -- LOCAL_FOLDER (YANDEX_API — позже)
+  file_name TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  app_version TEXT NOT NULL,
+  status TEXT NOT NULL,                -- OK|FAILED|PRUNED
+  error TEXT
+);
+
+-- AI-чат
+CREATE TABLE ai_conversation (
+  id TEXT PRIMARY KEY NOT NULL, title TEXT, model TEXT NOT NULL,
+  created_at_utc INTEGER NOT NULL, updated_at_utc INTEGER NOT NULL,
+  row_version INTEGER NOT NULL DEFAULT 1, deleted_at_utc INTEGER
+);
+CREATE TABLE ai_message (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_id TEXT NOT NULL REFERENCES ai_conversation(id),
+  role TEXT NOT NULL, content TEXT NOT NULL, model TEXT,
+  prompt_tokens INTEGER, completion_tokens INTEGER,
+  created_at_utc INTEGER NOT NULL,
+  row_version INTEGER NOT NULL DEFAULT 1, deleted_at_utc INTEGER
+);
+CREATE TABLE ai_request_payload (
+  id TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL,
+  datasets TEXT NOT NULL,              -- csv: EXPENSE,INCOME,ASSET
+  period_from INTEGER NOT NULL, period_to INTEGER NOT NULL,
+  mode TEXT NOT NULL,                  -- SUMMARY|RAW
+  payload_json TEXT NOT NULL, token_estimate INTEGER NOT NULL,
+  created_at_utc INTEGER NOT NULL
+);
+CREATE TABLE ai_schedule (
+  id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL,   -- MONTHLY|WEEKLY|MANUAL
+  day_of_month INTEGER, day_of_week INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at_utc INTEGER, next_due_at_utc INTEGER,
+  updated_at_utc INTEGER NOT NULL
+);
+
+-- Готовность к будущей синхронизации
+CREATE TABLE sync_outbox (
+  change_id TEXT PRIMARY KEY NOT NULL,
+  entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
+  operation TEXT NOT NULL,             -- CREATE|UPDATE|DELETE
+  row_version INTEGER NOT NULL,
+  occurred_at_utc INTEGER NOT NULL,
+  payload_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  synced_at_utc INTEGER,
+  UNIQUE(entity_type, entity_id, row_version)
+);
+CREATE TABLE sync_state (
+  key TEXT PRIMARY KEY NOT NULL,       -- device_id, last_server_sync_at_utc, курсоры
+  value TEXT NOT NULL,
+  updated_at_utc INTEGER NOT NULL
+);
+```
+
+**Seed** (идемпотентный, при первом запуске):
+- Расходы: Продукты, Транспорт, Жильё и ЖКХ, Кафе и рестораны, Здоровье, Развлечения,
+  Одежда, Связь и подписки, Образование, Путешествия, Прочее.
+- Доходы: Зарплата, Фриланс, Бонусы, Проценты и дивиденды, Прочее.
+- Активы: Наличные, Вклады, Брокерский счёт, ИИС и паи, Недвижимость, Прочее.
+
+---
+
+## 7. Готовность к будущей синхронизации (обязательно с первого коммита)
+
+Для каждой синхронизируемой таблицы: `id TEXT` = UUIDv4 (клиентская генерация),
+`created_at_utc`, `updated_at_utc`, `row_version` (инкремент при каждом update),
+`deleted_at_utc` (tombstone). FK только на UUID.
+
+- `sync_outbox` пишется **в той же транзакции**, что и мутация.
+- `sync_state` хранит `device_id` и курсоры.
+- Будущее правило конфликта: LWW по `(updated_at_utc, row_version, device_id)`;
+  аддитивные дельты коммутативны, поэтому аккумулирование сумм синхронизируется легко.
+- Запрещено: `AUTOINCREMENT` как публичный id, каскадные удаления, триггеры,
+  локальные таймзоны в БД.
+
+---
+
+## 8. Функциональные требования
+
+### F1. Расходы — основной экран
+- F1.1 При запуске открывается раздел «Расходы», период = текущий месяц.
+- F1.2 Список ячеек месяца: **одна строка на категорию** — цвет, имя, сумма, доля % от
+  итога месяца, Δ к прошлому месяцу (абс. и %), индикатор наличия комментария.
+  Сортировка по умолчанию по сумме (убыв.), доступна по имени/доле/Δ.
+- F1.3 Клик по строке → панель ячейки: сумма (редактируемая), комментарий
+  (редактируемый), **история изменений** из ревизий, действия «Сторнировать»,
+  «Удалить ячейку», «Дублировать в другой месяц».
+- F1.4 Добавление суммы: категория (поиск + недавние + чипы), сумма, месяц+год
+  (дефолт текущий), необязательный комментарий. Валидация: сумма ≠ 0, категория не
+  архивная, период в диапазоне.
+- F1.5 **Аккумулирование (merge).** Если ячейка `(category, period)` уже существует —
+  сумма прибавляется к существующей, новая строка не создаётся. Правило слияния
+  комментария: новый пустой → оставляем старый; старый пустой → пишем новый; оба
+  непустые и разные → добавляем новый отдельной строкой; совпадают после trim → не
+  дублируем. Ручное редактирование комментария = отдельная операция `SET_COMMENT`
+  (перезапись, не слияние).
+- F1.6 Batch-ввод: форма не закрывается после сохранения, категория и период
+  подставляются из предыдущего ввода.
+- F1.7 Переключение периода: стрелки, «Сегодня», пикер месяц/год; последний открытый
+  период запоминается per section.
+- F1.8 Undo (⌘/Ctrl+Z) последней операции в рамках сессии + снекбар «Отменено».
+- F1.9 Итоги месяца в шапке: сумма, число категорий, Δ к прошлому месяцу.
+- F1.10 «Дублировать прошлый месяц» — см. F5.
+
+### F2. Доходы
+- F2.1 Поведение идентично F1 при `section = INCOME`, отдельный набор категорий.
+- F2.2 Реализуется переиспользованием того же ledger-движка и тех же UI-компонентов;
+  копипаста экранов недопустима.
+
+### F3. Категории
+- F3.1 CRUD в рамках секции: имя (уникально среди неархивных в секции), цвет, иконка,
+  порядок (drag-and-drop). Иерархия плоская.
+- F3.2 «Удалить» = архивация: категория исчезает из пикеров, история и суммы
+  сохраняются; архивные видны отдельным списком и восстанавливаются.
+- F3.3 «Слить в другую категорию»: перенос всех ячеек источника в цель. При совпадении
+  `(category, period)` суммы аккумулируются, комментарии сливаются по правилу F1.5.
+  Операция атомарна, подтверждается с указанием числа затрагиваемых ячеек, создаёт
+  снапшот перед выполнением и попадает в Undo.
+- F3.4 Переименование не трогает историю (id стабилен).
+
+### F4. Активы
+- F4.1 Список счетов, сгруппированный по категориям активов, с балансом выбранного
+  месяца. Шапка: Net Worth (сумма балансов, включая отрицательные `CREDIT`),
+  Δ к прошлому месяцу, разложение Δ на «взносы» и «инвестиционный прирост»
+  (`прирост = balance[M] − balance[M−1] − contribution[M]`).
+- F4.2 CRUD счёта: имя, категория, тип `kind`, валюта, период открытия, период
+  закрытия (опц.), годовая ставка в б.п. (опц.), заметка.
+- F4.3 Снапшот на месяц: баланс (обязательно), взнос/снятие (опц.), заметка.
+  `UNIQUE(account, period)` → повторный ввод = редактирование.
+- F4.4 История счёта: таблица и спарклайн по месяцам, прирост за период, прогноз для
+  вкладов со ставкой (простой/сложный процент — переключатель).
+- F4.5 Закрытие счёта: ставит `closed_period`, счёт исключается из дублирования,
+  история сохраняется.
+
+### F5. «Дублировать прошлый месяц» — во всех трёх разделах
+Единый use-case `DuplicatePeriod(source, target, scope, options)`.
+- F5.1 Кнопка в тулбаре разделов «Расходы», «Доходы», «Активы».
+- F5.2 Диалог перед выполнением: месяц-источник (дефолт — предыдущий, можно любой);
+  политика конфликта, если целевой месяц уже заполнен: `SKIP` (**по умолчанию**) |
+  `ADD` (прибавить) | `OVERWRITE` (заменить, с явным предупреждением); чекбокс
+  «копировать комментарии» (**по умолчанию выключен**).
+- F5.3 Для активов дополнительно: копировать ли `contribution_minor` (по умолчанию нет —
+  копируется только баланс); копируются снапшоты счетов, не закрытых на целевой месяц.
+- F5.4 Для расходов/доходов копируются живые ячейки источника; ячейки архивных
+  категорий пропускаются и попадают в отчёт.
+- F5.5 Атомарно (одна транзакция); на каждую созданную/изменённую строку — ревизия
+  `op = DUPLICATE` с `source_period`; отменяется одним Undo как одна операция.
+- F5.6 Отчёт после выполнения: «Скопировано N, пропущено M (уже заполнено),
+  проигнорировано K (архивные)»; экран переходит в целевой месяц.
+- F5.7 Молчаливая перезапись запрещена.
+
+### F6. Аналитика и графики
+- F6.1 Обязательные представления:
+  1. Расходы/доходы по месяцам за период — stacked bar по категориям + линия итога.
+  2. Динамика категории — line/bar для одной или нескольких категорий.
+  3. Структура за период — donut с долями и суммами.
+  4. Произвольный период — пресеты (3/6/12 мес, YTD, прошлый год, кастом) и сравнение
+     «период A vs период B».
+  5. Cash flow — доходы vs расходы vs дельта, savings rate %.
+  6. Net worth — линия капитала + stacked bar по категориям активов; отдельно линия
+     «взносы vs инвестиционный прирост».
+  7. Табличный вид любого графика + экспорт CSV.
+- F6.2 Мультивыбор категорий, фильтр по секции, режимы «абсолют / доля %»,
+  «с накоплением / без».
+- F6.3 Интерактив: hover-тултип (период, категория, сумма, доля, Δ), клик по сегменту →
+  drill-down к ячейке, легенда с toggle, выбор диапазона.
+- F6.4 Все расчёты — чистые функции `core:analytics` с golden-тестами; SQL отвечает
+  только за группировку сумм.
+- F6.5 Статистика: среднее, медиана, мин/макс по категории за период; топ-N; MoM и YoY.
+- F6.6 Экспорт графика в PNG, данных в CSV/JSON.
+- F6.7 Дашборд «Обзор»: 4 панели (месяц, cash flow, net worth, AI-саммари).
+- F6.8 Миры потоков и остатков не смешиваются: суммы расходов/доходов никогда не
+  складываются с балансами активов в одной серии.
+
+### F7. Бэкап (v1 — только локальная папка)
+- F7.1 Снапшот = `VACUUM INTO '<backups>/Finance-<UTC-ISO>-v<schemaVersion>.db'` +
+  файл `.sha256` + запись в `Finance-manifest.json` (`latest`, `schema_version`,
+  `app_version`, `created_at_utc`, `sha256`).
+- F7.2 Транспорт v1 — `LOCAL_FOLDER`: путь к папке синхронизации Яндекс.Диска задаётся
+  в настройках, валидируется на существование и право записи. `YANDEX_API` (OAuth,
+  `resources/upload?overwrite=` → PUT по `href`, refresh токена, ретраи) — **отложен**,
+  в коде только `NotImplementedTransport` с понятным сообщением.
+- F7.3 Триггеры: `APP_CLOSE`, `IDLE` (10–15 мин бездействия + есть изменения + нет
+  активной транзакции + ≥30 с после последней записи), `MANUAL`, `POST_IMPORT`,
+  `PRE_RESTORE`, `POST_MIGRATION`, `STARTUP_DIRTY`.
+- F7.4 Бэкап пропускается, если БД не менялась с последнего успешного (dirty-счётчик).
+- F7.5 Retention: 7 дневных + 4 недельных + 6 месячных + 3 годовых; прунинг только
+  после успешной записи и верификации нового снапшота; никогда не ниже 3 валидных
+  копий; при неудачном последнем бэкапе прунинг запрещён.
+- F7.6 Кнопка «Синхронизировать» в сайдбаре: снапшот → верификация (sha256 +
+  `PRAGMA integrity_check`) → выкладка в папку → обновление `LATEST`/манифеста →
+  прунинг → запись в `backup_log` → статус в UI.
+- F7.7 Восстановление: выбор снапшота → проверка checksum → открытие read-only +
+  `PRAGMA integrity_check` + проверка `schema_version` (снапшот новее приложения →
+  отказ с внятным сообщением) → `PRE_RESTORE` снапшот текущего состояния в карантин →
+  восстановление во временный файл → атомарный rename → **требование перезапуска** →
+  при ошибке откат к карантину. Полная замена БД; слияние двух баз не делаем.
+- F7.8 Журнал бэкапов в настройках: время, триггер, транспорт, размер, sha256, статус,
+  ошибка; ретрай неудачных.
+- F7.9 Индикатор в сайдбаре: «Синхронизировано N назад» / «Есть изменения» / «Ошибка»
+  (клик → журнал).
+- F7.10 Шифрование бэкапов в v1 отсутствует (осознанный риск, D-05). Секреты
+  (API-ключ OpenRouter) не попадают ни в БД, ни в снапшоты — только `SecretStore`.
+
+### F8. AI-чат (OpenRouter)
+- F8.1 Gateway: OpenAI-совместимый `POST {baseUrl}/chat/completions`; заголовки
+  `Authorization: Bearer <key>`, `HTTP-Referer`, `X-Title`; стриминг SSE
+  (`stream: true`) → `Flow<AiChunk>`; `baseUrl` переопределяется в настройках.
+- F8.2 Выбор модели: список из `GET /models` (кэш + refresh) и ручной ввод id;
+  по умолчанию недорогая модель.
+- F8.3 Конструктор payload: переключатели «Расходы / Доходы / Активы» в любых
+  комбинациях; период (пресеты + кастом); режим `SUMMARY` (агрегаты: суммы по
+  категориям и месяцам, доли, Δ, топ-N, балансы, net worth, savings rate) — по
+  умолчанию, или `RAW` (ячейки с комментариями) — только если оценка токенов ниже
+  порога, иначе предупреждение. Оценка токенов показывается **до** отправки.
+- F8.4 Системный промпт: роль «личный финансовый аналитик»; язык ответа RU; опираться
+  только на присланные данные, не выдумывать; указывать период и единицы; 3–5
+  конкретных выводов и 1–3 рекомендации; отмечать аномалии (рост категории
+  значительно выше обычного); не давать инвестиционных гарантий. Промпт редактируется
+  в настройках.
+- F8.5 Отправка: кнопка «Обсудить показатели» + пресеты вопросов («Что выросло?»,
+  «Сравни с прошлым годом», «Составь отчёт за месяц», «Оцени мою норму сбережений»).
+- F8.6 Расписание: `MONTHLY` (день месяца) / `WEEKLY` (день недели) / `MANUAL`.
+  Исполнение — **catch-up при старте** и по таймеру, пока приложение открыто
+  (фоновой службы нет); `next_due_at`/`last_run_at` в БД; результат сохраняется как
+  диалог «Отчёт за <период>».
+- F8.7 История диалогов локальная: продолжить, переименовать, удалить (soft), экспорт
+  в Markdown.
+- F8.8 Ошибки 401/402/429/5xx/таймаут → понятные сообщения + ретрай. При
+  `NetworkMode.OFF` или выключенном AI раздел показывает объяснение и кнопку включить.
+- F8.9 Ключ в `SecretStore`, в UI — маска, кнопка «проверить подключение».
+- F8.10 После ответа показывать `usage.prompt_tokens/completion_tokens` и накопительную
+  статистику за месяц.
+
+### F9. Настройки и флаги
+- F9.1 Общие: базовая валюта, первый день недели, стартовый раздел, плотность UI.
+- F9.2 Данные: путь к БД, размер, число ячеек, импорт CSV, экспорт CSV/JSON/Markdown,
+  «Открыть папку данных», проверка целостности.
+- F9.3 Сеть: `NetworkMode OFF|ON` (главный фича-флаг), `baseUrl` будущего backend,
+  токен в `SecretStore`, таймауты, «проверить соединение». При `OFF` сетевые вызовы
+  синхронизации запрещены; AI и бэкап имеют собственные независимые флаги.
+- F9.4 AI: вкл/выкл, baseUrl OpenRouter, ключ, модель по умолчанию, системный промпт,
+  режим payload, расписание.
+- F9.5 Бэкап: папка, политика retention, авто-бэкап вкл/выкл, idle-порог, журнал.
+- F9.6 О программе: версия, версия схемы, логи.
+- Настройки типизированы (`AppSettings`), применяются без перезапуска, где это безопасно.
+
+### F10. Импорт и экспорт
+- F10.1 Импорт CSV (включая экспорт из Notion): мастер из 4 шагов — файл, разделитель и
+  кодировка → маппинг колонок (месяц/год, категория, сумма, комментарий) → маппинг
+  категорий (создать новые / сопоставить / пропустить) с предпросмотром → подтверждение
+  и импорт с отчётом. Обязательный снапшот до импорта; импортированные строки
+  группируются по ячейкам, на каждую ячейку — одна ревизия `op = IMPORT` с
+  `idempotency_key`; повторный импорт того же файла не создаёт дублей.
+- F10.2 Дедупликация по `idempotency_key` (хеш стабильных полей источника + batch id),
+  а не по «категория + период + сумма».
+- F10.3 Экспорт: CSV (табличный вид среза), JSON (структурированный дамп домена),
+  Markdown (отчёт для AI или чтобы поделиться).
+
+---
+
+## 9. Нефункциональные требования
+
+| Категория | Требование |
+|---|---|
+| Производительность | Чтение месяца (десятки ячеек) < 16 мс; агрегация 10 000 ячеек < 100 мс; рендер графика на 60 точек < 200 мс; холодный старт < 3 с; снапшот БД < 1 с |
+| Надёжность | Все мутации в транзакциях; WAL; сбой бэкапа не блокирует работу приложения |
+| Ошибки | Никаких stack trace пользователю; сообщения RU с действием («Повторить», «Открыть настройки»); всё пишется в лог |
+| Логи | Ротация 7 × 5 МБ; без сумм и персональных данных по умолчанию |
+| UI | Полная поддержка клавиатуры; окно 1100×700…2560+; контраст WCAG AA для светлой темы |
+| Приватность | Нет телеметрии; секреты вне БД и бэкапов; сетевые вызовы только явно включённые |
+| Совместимость | macOS 12+ (arm64 и x64), Windows 10+ x64 |
+| Линт | detekt + ktlint; запрет `Double` для денег; запрет `runBlocking` вне `main` |
+
+**Горячие клавиши:** `⌘/Ctrl+1..6` — разделы, `N` — новая запись, `/` или `⌘K` — поиск,
+`←/→` — смена месяца, `Enter` — открыть ячейку, `⌘Enter` — сохранить, `⌘Z` — undo,
+`⌘S` — синхронизировать, `Esc` — закрыть панель.
+
+---
+
+## 10. UI/UX
+
+Окно: левый сайдбар (Расходы, Доходы, Активы, Аналитика, AI, Настройки + индикатор
+бэкапа и кнопка «Синхронизировать»), верхняя панель (переключатель периода, итог,
+дельта, действия), основная область.
+
+```
+┌──────┬────────────────────────────────────────────────────────────┐
+│      │  ‹ Февраль 2026 ›   [Сегодня]     Итого: 84 320 ₽  Δ +12% │
+│ Рас- ├────────────────────────────────────────────────────────────┤
+│ ходы │  Поиск категории…        [Дублировать прошлый месяц] [+ N] │
+│ Дохо-│ ┌────────────────────────────────────────────────────────┐ │
+│ ды   │ │ ● Продукты          32 400 ₽  38%   ▲ 8%   💬        │ │
+│ Ак-  │ │ ● Транспорт         12 000 ₽  14%   ▼ 3%              │ │
+│ тивы │ │ ● Жильё и ЖКХ       25 000 ₽  30%   —        💬        │ │
+│ Ана- │ │ ● Развлечения        8 920 ₽  11%   ▲ 22%              │ │
+│ лит. │ └────────────────────────────────────────────────────────┘ │
+│ AI   │   Панель ячейки: сумма, комментарий, история изменений      │
+│ Наст-│                                                            │
+│──────│  [Таблица] [Структура] [Динамика 12 мес]                   │
+│💾 2ч │                                                            │
+└──────┴────────────────────────────────────────────────────────────┘
+```
+
+- Собственный `DataTable`: фиксированный заголовок, виртуализация, сортировка,
+  inline-редактирование по двойному клику, контекстное меню, навигация стрелками,
+  copy/paste.
+- `core:charts`: `StackedBarChart`, `GroupedBarChart`, `LineChart` (multi-series, gaps),
+  `DonutChart`; общие оси, сетка, легенда, тултип, экспорт в PNG; палитра различима для
+  дейтеранопии.
+- Навигация: типизированные sealed-экраны, без тяжёлых навигационных библиотек.
+- Системное меню: Файл (бэкап, импорт, экспорт, выход), Правка (undo, поиск),
+  Вид (период, плотность), Помощь (логи, о программе).
+
+---
+
+## 11. Тестирование
+
+1. `core:analytics` — golden-тесты: агрегаты по месяцам, доли, Δ MoM/YoY, savings rate,
+   net worth, разложение «взносы/прирост», gap ≠ 0, пустые периоды, отрицательные
+   балансы.
+2. `core:domain` — merge/аккумулирование, правило слияния комментария, сторно,
+   архивация и слияние категорий, `DuplicatePeriod` (все три политики конфликта),
+   валидация периодов и сумм.
+3. `core:data` — репозитории на in-memory SQLite; миграции (fresh install + upgrade);
+   tombstones; `row_version`; атомарность «мутация + ревизия + outbox»;
+   **повторное создание ячейки после удаления** (проверка partial unique index).
+4. `core:backup` — retention (таблица кейсов), запрет прунинга при неудачном бэкапе,
+   checksum, restore-роллбэк, триггеры (fake clock), пропуск при отсутствии изменений.
+5. `feature:ai` — payload-builder (детерминированный JSON, лимит токенов, режимы,
+   комбинации датасетов), catch-up расписания (fake clock), маппинг ошибок;
+   сетевой клиент на Ktor MockEngine.
+6. `feature:*` — состояния экранов через Turbine (loading/error/empty/data).
+7. UI-smoke — 3–5 compose-desktop тестов (открытие расходов, добавление суммы,
+   смена периода).
+8. `docs/manual-test-checklist.md` — импорт CSV, восстановление из бэкапа,
+   локальная сборка `.dmg`/`.msi`.
+
+Команды (фиксируются в README; до первого успешного запуска считаются планируемыми):
+```
+./gradlew test
+./gradlew lint
+./gradlew :app:desktop:run
+./gradlew :app:desktop:packageDmg    # только macOS
+./gradlew :app:desktop:packageMsi    # только Windows, нужен WiX
+```
+
+---
+
+## 12. Дорожная карта
+
+| Этап | Содержание | Критерий приёмки |
+|---|---|---|
+| M1 | Каркас Gradle, схема SQLDelight v1 + миграции, `core:model`, seed категорий, окно с сайдбаром и переключателем периода, светлая тема | `test` и `lint` зелёные; окно открывается; `finance.db` создан; merge-поведение подтверждено тестами |
+| M2 | Раздел «Расходы» целиком: список ячеек, панель ячейки с историей ревизий, batch-ввод, Undo, CRUD категорий (архивация + слияние), «Дублировать прошлый месяц» | Основной сценарий работает end-to-end |
+| M3 | Раздел «Доходы» переиспользованием движка | Работает без копипасты UI |
+| M4 | Активы: счета, снапшоты, дублирование месяца, Net Worth, разложение прироста, история, закрытие счёта | Net Worth корректен, включая отрицательные балансы |
+| M5 | Аналитика: `core:charts`, 7 представлений, дашборд, экспорт PNG/CSV | Графики на реальных данных, golden-тесты зелёные |
+| M6 | Бэкап: снапшоты, checksum, манифест, retention, триггеры, журнал, восстановление | Цикл «изменил → закрыл → снапшот в папке → восстановился» пройден вручную |
+| M7 | Импорт CSV из Notion + экспорт CSV/JSON/Markdown | История перенесена, повторный импорт без дублей |
+| M8 | AI-чат: OpenRouter, payload, стриминг, история, расписание, `SecretStore` | Отчёт за 12 мес генерируется; ключ не в БД и не в бэкапах |
+| M9 | Настройки целиком (включая `NetworkMode`), хоткеи, меню, README, чек-лист, локальная сборка `.dmg` и `.msi` | Установщики собираются локально на обеих ОС |
+
+После каждого этапа: тесты + линт + запись в `docs/DECISIONS.md` + честный отчёт о том,
+что реально проверено.
+
+---
+
+## 13. Риски
+
+| Риск | Мера |
+|---|---|
+| В системе нет JDK/Gradle — сборку не запустить | Зафиксировано как блокер старта; варианты решения в DECISIONS D-09 |
+| Несовместимость версий CMP ↔ Kotlin | Проверка первым запуском; откат на CMP 1.11.1 + Kotlin 2.3.21 |
+| Compose: нет готовой плотной таблицы и графиков | Свой `DataTable` и `core:charts` — первыми, до бизнес-логики |
+| Потеря данных при бэкапе/восстановлении | Версионируемые снапшоты, checksum, `integrity_check`, pre-restore карантин, атомарный rename, запрет прунинга при ошибке |
+| Ошибочный ввод сразу вплавляется в сумму ячейки | Журнал ревизий + Undo + «Сторнировать» |
+| Утечка секретов в облачную папку | Секреты только в `SecretStore`, вне БД и снапшотов; ассерт в тестах |
+| Данные в папке Яндекс.Диска не шифруются | Осознанный риск (D-05); шифрование можно добавить позже без миграции данных |
+| Разрастание скоупа | Этапы с критериями приёмки; вырезанные фичи зафиксированы в DECISIONS |
+| `.msi` собирается только на Windows (WiX) | Документировано в README; сборка локально на каждой ОС |
+
+---
+
+## 14. Prerequisites
+
+JDK 21; Gradle (или wrapper); Xcode Command Line Tools для `.dmg`; WiX Toolset для
+`.msi`; API-ключ OpenRouter для M8; папка синхронизации Яндекс.Диска для M6.

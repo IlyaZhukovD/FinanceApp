@@ -1,0 +1,44 @@
+-- Диагностика данных (SPEC.md F9.2 «проверка целостности»). В норме все запросы
+-- возвращают пустой результат, кроме counts.
+--
+-- Запросы к sqlite_master и PRAGMA здесь невозможны: SQLDelight валидирует SQL на
+-- этапе компиляции и не знает системных таблиц. Такие проверки выполняются через
+-- драйвер напрямую в DatabaseFactory.
+counts:
+SELECT
+    (SELECT COUNT(*) FROM category) AS categories,
+    (SELECT COUNT(*) FROM category_month) AS cells,
+    (SELECT COUNT(*) FROM category_month_revision) AS revisions,
+    (SELECT COUNT(*) FROM asset_account) AS accounts,
+    (SELECT COUNT(*) FROM asset_snapshot) AS snapshots,
+    (SELECT COUNT(*) FROM sync_outbox WHERE status = 'pending') AS pendingSync;
+
+-- Ячейки, ссылающиеся на несуществующую категорию.
+orphanCells:
+SELECT cm.id, cm.category_id, cm.period, cm.amount_minor
+FROM category_month cm
+LEFT JOIN category c ON c.id = cm.category_id
+WHERE c.id IS NULL;
+
+-- Снапшоты активов без счёта.
+orphanSnapshots:
+SELECT s.id, s.account_id, s.period
+FROM asset_snapshot s
+LEFT JOIN asset_account a ON a.id = s.account_id
+WHERE a.id IS NULL;
+
+-- Ревизии без ячейки: означали бы потерю данных при удалении.
+orphanRevisions:
+SELECT r.id, r.cell_id, r.op
+FROM category_month_revision r
+LEFT JOIN category_month cm ON cm.id = r.cell_id
+WHERE cm.id IS NULL;
+
+-- Ячейки в архивных категориях, которые всё ещё попадают в списки месяца.
+-- Не ошибка сама по себе (история сохраняется), но полезно для диагностики слияний.
+cellsInArchivedCategories:
+SELECT cm.id, c.name AS category_name, cm.period, cm.amount_minor
+FROM category_month cm
+JOIN category c ON c.id = cm.category_id
+WHERE c.is_archived = 1 AND cm.deleted_at_utc IS NULL
+ORDER BY cm.period DESC;

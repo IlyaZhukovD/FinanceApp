@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+
+# Локальный тулчейн (скачанный Gradle) — не часть проекта
+.tools/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+out/
+
+# Данные приложения: финансы пользователя никогда не коммитим
+*.db
+*.db-wal
+*.db-shm
+backups/
+logs/
+settings.local.json
+
+# macOS
+.DS_Store

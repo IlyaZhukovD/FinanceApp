@@ -1,0 +1,109 @@
+CREATE TABLE asset_account (
+    id TEXT NOT NULL PRIMARY KEY,
+    category_id TEXT NOT NULL REFERENCES category(id),
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'RUB',
+    opened_period INTEGER NOT NULL,
+    closed_period INTEGER,
+    annual_rate_bp INTEGER,
+    note TEXT,
+    created_at_utc INTEGER NOT NULL,
+    updated_at_utc INTEGER NOT NULL,
+    row_version INTEGER NOT NULL DEFAULT 1,
+    deleted_at_utc INTEGER
+);
+
+CREATE INDEX idx_asset_account_category ON asset_account(category_id);
+
+CREATE TABLE asset_snapshot (
+    id TEXT NOT NULL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES asset_account(id),
+    period INTEGER NOT NULL,
+    balance_minor INTEGER NOT NULL,
+    contribution_minor INTEGER,
+    note TEXT,
+    created_at_utc INTEGER NOT NULL,
+    updated_at_utc INTEGER NOT NULL,
+    row_version INTEGER NOT NULL DEFAULT 1,
+    deleted_at_utc INTEGER
+);
+
+-- Остаток — тоже «одна строка на сущность в месяц», поэтому уникальность частичная:
+-- закрытый soft-delete снапшот не должен мешать ввести баланс за тот же месяц заново.
+CREATE UNIQUE INDEX uq_asset_snapshot_active
+    ON asset_snapshot(account_id, period) WHERE deleted_at_utc IS NULL;
+
+CREATE INDEX idx_snapshot_period ON asset_snapshot(period);
+
+selectAccountById:
+SELECT * FROM asset_account WHERE id = ?;
+
+selectActiveAccounts:
+SELECT *
+FROM asset_account
+WHERE deleted_at_utc IS NULL AND closed_period IS NULL
+ORDER BY name;
+
+selectAllAccounts:
+SELECT *
+FROM asset_account
+WHERE deleted_at_utc IS NULL
+ORDER BY closed_period IS NOT NULL, name;
+
+selectAccountsByCategory:
+SELECT *
+FROM asset_account
+WHERE category_id = ? AND deleted_at_utc IS NULL
+ORDER BY name;
+
+insertAccount:
+INSERT INTO asset_account (
+    id, category_id, name, kind, currency, opened_period, closed_period,
+    annual_rate_bp, note, created_at_utc, updated_at_utc, row_version, deleted_at_utc
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateAccount:
+UPDATE asset_account
+SET name = ?, category_id = ?, kind = ?, currency = ?, annual_rate_bp = ?, note = ?,
+    updated_at_utc = ?, row_version = row_version + 1
+WHERE id = ?;
+
+closeAccount:
+UPDATE asset_account
+SET closed_period = ?, updated_at_utc = ?, row_version = row_version + 1
+WHERE id = ?;
+
+selectSnapshot:
+SELECT *
+FROM asset_snapshot
+WHERE account_id = ? AND period = ? AND deleted_at_utc IS NULL;
+
+selectSnapshotsForPeriod:
+SELECT *
+FROM asset_snapshot
+WHERE period = ? AND deleted_at_utc IS NULL
+ORDER BY balance_minor DESC;
+
+selectSnapshotsByAccount:
+SELECT *
+FROM asset_snapshot
+WHERE account_id = ? AND deleted_at_utc IS NULL
+ORDER BY period;
+
+selectSnapshotsInRange:
+SELECT *
+FROM asset_snapshot
+WHERE period >= ? AND period <= ? AND deleted_at_utc IS NULL
+ORDER BY period;
+
+insertSnapshot:
+INSERT INTO asset_snapshot (
+    id, account_id, period, balance_minor, contribution_minor, note,
+    created_at_utc, updated_at_utc, row_version, deleted_at_utc
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateSnapshot:
+UPDATE asset_snapshot
+SET balance_minor = ?, contribution_minor = ?, note = ?, updated_at_utc = ?, row_version = ?
+WHERE id = ?;

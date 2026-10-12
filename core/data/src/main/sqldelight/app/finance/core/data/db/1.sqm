@@ -1,0 +1,32 @@
+-- Миграция 1 -> 2: правило формирования баланса категории активов и признак
+-- отрицательного остатка (SPEC.md F4.6, docs/DECISIONS.md D-20).
+--
+-- Колонки добавляются со значением по умолчанию, поэтому существующие строки
+-- (включая потоковые категории расходов и доходов) получают нейтральное правило:
+-- FLAT и «без отрицательного баланса». Колонки дописываются В КОНЕЦ таблицы —
+-- ровно так их объявляет Category.sq, иначе SELECT * в мигрированной и свежей базе
+-- читал бы разные порядки колонок.
+ALTER TABLE category ADD COLUMN balance_policy TEXT NOT NULL DEFAULT 'FLAT';
+ALTER TABLE category ADD COLUMN allows_negative_balance INTEGER NOT NULL DEFAULT 0;
+
+-- Стартовым категориям активов проставляем осмысленные правила, чтобы поведение после
+-- миграции совпадало с ожиданиями: у вкладов ставка известна, брокерский счёт, паи и
+-- недвижимость оцениваются вручную, наличные и «Прочее» не растут.
+--
+-- Сопоставление двойное — по имени И по позиции стартового посева (`sort_order`):
+-- пользователь мог переименовать категорию (например, «ИИС и паи» -> «Паи»), и тогда
+-- имя уже не совпадает. Позиции засеянных категорий активов стабильны: порядок задаёт
+-- CategorySeeder, а созданные пользователем категории получают sort_order = max + 1,
+-- то есть 6 и больше. Section = 'ASSET' обязателен в каждом условии: у расходов и
+-- доходов свои номера порядка.
+UPDATE category SET balance_policy = 'FIXED_RATE' WHERE section = 'ASSET' AND name = 'Вклады';
+UPDATE category SET balance_policy = 'FIXED_RATE' WHERE section = 'ASSET' AND sort_order = 1;
+UPDATE category SET balance_policy = 'MANUAL_VALUATION' WHERE section = 'ASSET' AND name = 'Брокерский счёт';
+UPDATE category SET balance_policy = 'MANUAL_VALUATION' WHERE section = 'ASSET' AND name = 'ИИС и паи';
+UPDATE category SET balance_policy = 'MANUAL_VALUATION' WHERE section = 'ASSET' AND name = 'Недвижимость';
+UPDATE category SET balance_policy = 'MANUAL_VALUATION' WHERE section = 'ASSET' AND sort_order = 2;
+UPDATE category SET balance_policy = 'MANUAL_VALUATION' WHERE section = 'ASSET' AND sort_order = 3;
+UPDATE category SET balance_policy = 'MANUAL_VALUATION' WHERE section = 'ASSET' AND sort_order = 4;
+
+-- Категории, которые пользователь создал сам, остаются FLAT: правило выбирается
+-- в диалоге «Категории» (F3.1).

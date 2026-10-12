@@ -47,7 +47,6 @@ class SqlAssetRepository(
             id = account.id,
             category_id = account.categoryId,
             name = account.name,
-            kind = account.kind.name,
             currency = account.currency,
             opened_period = account.openedPeriod.toDbKey(),
             closed_period = account.closedPeriod?.toDbKey(),
@@ -57,6 +56,7 @@ class SqlAssetRepository(
             updated_at_utc = account.updatedAtUtc,
             row_version = account.rowVersion.toLong(),
             deleted_at_utc = account.deletedAtUtc,
+            term_months = account.termMonths?.toLong(),
         )
         enqueue(ENTITY_ACCOUNT, account.id, OPERATION_CREATE, account.rowVersion, account.updatedAtUtc)
     }
@@ -69,10 +69,10 @@ class SqlAssetRepository(
         assets.updateAccount(
             name = account.name,
             category_id = account.categoryId,
-            kind = account.kind.name,
             currency = account.currency,
             annual_rate_bp = account.annualRateBp?.toLong(),
             note = account.note,
+            term_months = account.termMonths?.toLong(),
             updated_at_utc = account.updatedAtUtc,
             id = account.id,
         )
@@ -122,6 +122,22 @@ class SqlAssetRepository(
         return assets.selectSnapshotsByAccount(accountId)
             .executeAsList()
             .map { it.toDomain(currency) }
+    }
+
+    override suspend fun snapshotsInRange(from: Period, to: Period): List<AssetSnapshot> {
+        val currencies = currencies()
+        return assets.selectSnapshotsInRange(period = from.toDbKey(), period_ = to.toDbKey())
+            .executeAsList()
+            // Валюта берётся из счёта: в asset_snapshot её нет (D-14). Снапшот без счёта
+            // невозможен при включённом контроле FK, но молча подставлять RUB было бы хуже.
+            .mapNotNull { row -> currencies[row.account_id]?.let { row.toDomain(it) } }
+    }
+
+    override suspend fun snapshotsUpTo(period: Period): List<AssetSnapshot> {
+        val currencies = currencies()
+        return assets.selectSnapshotsUpTo(period = period.toDbKey())
+            .executeAsList()
+            .mapNotNull { row -> currencies[row.account_id]?.let { row.toDomain(it) } }
     }
 
     override suspend fun insertSnapshot(snapshot: AssetSnapshot) {

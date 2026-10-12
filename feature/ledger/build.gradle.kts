@@ -21,6 +21,10 @@ dependencies {
     // Общий экран расходов и доходов: F2.2 требует переиспользования, а не копипасты.
     api(project(":core:ui"))
     api(project(":core:domain"))
+    // Управление категориями (F3.1) общее для трёх разделов; api — потому что тип
+    // CategoriesController виден в сигнатуре LedgerScreen и нужен точкам входа
+    // feature:expenses и feature:income.
+    api(project(":feature:categories"))
     implementation(project(":core:model"))
     implementation(libs.coroutines.core)
 

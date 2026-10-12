@@ -11,12 +11,15 @@ import app.finance.core.domain.RecordSnapshot
 import app.finance.core.domain.SnapshotInput
 import app.finance.core.domain.SnapshotResult
 import app.finance.core.model.AssetAccount
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalances
 import app.finance.core.model.AssetSnapshot
+import app.finance.core.model.AccountBalance
+import app.finance.core.model.BalanceSource
 import app.finance.core.model.Category
 import app.finance.core.model.CategorySection
 import app.finance.core.model.Money
 import app.finance.core.model.Period
+import app.finance.core.ui.badgeRu
 import app.finance.core.ui.deltaPercent
 import app.finance.core.ui.formatRu
 import app.finance.core.ui.shortRu
@@ -82,6 +85,7 @@ class AssetsController(
                 snapshotForm = null,
                 accountDialog = null,
                 confirm = null,
+                confirmBalances = null,
                 notice = null,
                 error = null,
             )
@@ -94,6 +98,18 @@ class AssetsController(
     fun openSnapshotForm(accountId: String) {
         val period = _state.value.period
         val row = _state.value.rows().firstOrNull { it.accountId == accountId } ?: return
+        if (!row.isActiveInPeriod) {
+            // Счёт закрыт в этом месяце (F4.5, D-19): его остаток не участвует в Net Worth,
+            // поэтому вводить нечего — показываем причину вместо формы.
+            _state.update {
+                it.copy(
+                    snapshotForm = null,
+                    notice = "«${row.name}» закрыт: остаток за ${period.shortRu()} не учитывается",
+                    error = null,
+                )
+            }
+            return
+        }
         scope.launch {
             runCatching { io { assets.findSnapshot(accountId, period) } }
                 .onFailure { error -> _state.update { failed(it, error) } }
@@ -109,6 +125,9 @@ class AssetsController(
                                 contributionText = snapshot?.contribution?.toPlainString().orEmpty(),
                                 noteText = snapshot?.note.orEmpty(),
                                 isEdit = snapshot != null,
+                                // Черновик переноса (F4.6, D-21): поле ввода означает
+                                // изменение стоимости, а отправная точка показана подписью.
+                                carriedBalance = row.balance?.takeIf { snapshot == null && row.isDraft },
                             ),
                             error = null,
                         )
@@ -134,17 +153,22 @@ class AssetsController(
     }
 
     /**
+     * Переключение режима ввода при подтверждении перенесённой стоимости (F4.6, D-21):
+     * дельта — рыночное изменение, сумма — значение целиком. Введённое число очищается,
+     * потому что в двух режимах оно означает разное.
+     */
+    fun setSnapshotMode(mode: BalanceInputMode) {
+        updateForm { it.copy(mode = mode, balanceText = "", error = null) }
+    }
+
+    /**
      * Сохранение остатка. Если снапшот за месяц уже есть, он заменяется — это делает
      * use-case `RecordSnapshot`, опираясь на уникальный индекс `(счёт, период)`.
      */
     fun submitSnapshot() {
         val form = _state.value.snapshotForm ?: return
 
-        val balance = Money.parse(form.balanceText, form.currency)
-        if (balance == null) {
-            updateFormError("Введите остаток, например 15000 или 15 000,50")
-            return
-        }
+        val balance = balanceOf(form) ?: return
         val contributionText = form.contributionText.trim()
         val contribution = if (contributionText.isEmpty()) {
             null
@@ -181,6 +205,118 @@ class AssetsController(
         }
     }
 
+    // ── Подтверждение перенесённой стоимости (F4.6, D-21) ────────────────────
+
+    /**
+     * Массовое подтверждение: все черновики месяца одним окном.
+     *
+     * Черновик — не факт: он не входит в Net Worth, пока пользователь не ввёл дельту
+     * или сумму. Пустой ввод в строке означает «подтвердить перенесённое значение».
+     */
+    fun openConfirmBalances() {
+        val reminder = _state.value.reminder ?: return
+        _state.update {
+            it.copy(
+                confirmBalances = ConfirmBalancesState(
+                    period = reminder.period,
+                    items = reminder.accounts.map { account ->
+                        ConfirmBalanceItem(
+                            accountId = account.accountId,
+                            accountName = account.name,
+                            currency = account.currency,
+                            carriedBalance = account.carriedBalance,
+                        )
+                    },
+                ),
+                error = null,
+            )
+        }
+    }
+
+    fun closeConfirmBalances() {
+        _state.update { it.copy(confirmBalances = null) }
+    }
+
+    /**
+     * Режим ввода в строке массового подтверждения. Введённое число очищается:
+     * в двух режимах оно означает разное (F4.6, D-21).
+     */
+    fun setConfirmMode(accountId: String, mode: BalanceInputMode) =
+        updateConfirm(accountId) { it.copy(mode = mode, amountText = "") }
+
+    fun setConfirmAmount(accountId: String, text: String) =
+        updateConfirm(accountId) { it.copy(amountText = text) }
+
+    /**
+     * Запись подтверждённых значений: на каждый счёт создаётся или правится снапшот месяца.
+     *
+     * Взнос не заполняется намеренно: дельта здесь — рыночное изменение стоимости, а
+     * взносы и снятия остаются отдельным полем (D-21). Иначе прирост месяца потерял бы
+     * смысл, потому что считается как `Δ − взносы`.
+     */
+    fun submitConfirmBalances() {
+        val dialog = _state.value.confirmBalances ?: return
+        val period = dialog.period
+
+        // Разбор ввода до записи: ошибка в одном счёте не должна портить остальные.
+        val requests = ArrayList<SnapshotInput>(dialog.items.size)
+        for (item in dialog.items) {
+            val balance = confirmedBalance(item) ?: return
+            requests += SnapshotInput(accountId = item.accountId, period = period, balance = balance)
+        }
+
+        scope.launch {
+            _state.update {
+                it.copy(confirmBalances = it.confirmBalances?.copy(isSaving = true, error = null))
+            }
+            runCatching { io { requests.forEach { request -> recordSnapshot(request) } } }
+                .onFailure { error -> _state.update { failed(it, error) } }
+                .onSuccess {
+                    _state.update { it.copy(confirmBalances = null) }
+                    reloadMonth(notice = "Стоимость подтверждена: ${requests.size} ${accountsWord(requests.size)}")
+                }
+        }
+    }
+
+    /**
+     * Значение строки массового подтверждения; null — разбор не прошёл, ошибка показана.
+     *
+     * Пустой ввод подтверждает перенесённую сумму как есть: пользователь согласен,
+     * что стоимость за месяц не изменилась.
+     */
+    private fun confirmedBalance(item: ConfirmBalanceItem): Money? {
+        val text = item.amountText.trim()
+        if (text.isEmpty()) return item.carriedBalance
+
+        val amount = Money.parse(text, item.currency)
+        if (amount == null) {
+            _state.update { state ->
+                state.copy(
+                    confirmBalances = state.confirmBalances?.copy(
+                        error = "«${item.accountName}»: введите число, например 1500 или -250",
+                    ),
+                )
+            }
+            return null
+        }
+        return if (item.mode == BalanceInputMode.DELTA) item.carriedBalance + amount else amount
+    }
+
+    private fun updateConfirm(accountId: String, transform: (ConfirmBalanceItem) -> ConfirmBalanceItem) {
+        _state.update { state ->
+            state.copy(
+                confirmBalances = state.confirmBalances?.let { dialog ->
+                    dialog.copy(
+                        error = null,
+                        items = dialog.items.map { item ->
+                            if (item.accountId == accountId) transform(item) else item
+                        },
+                    )
+                },
+            )
+        }
+    }
+
     // ── Счета (F4.2, F4.5) ───────────────────────────────────────────────────
 
     fun openAccountDialog() {
@@ -200,13 +336,34 @@ class AssetsController(
 
     fun setAccountName(text: String) = updateDialog { it.copy(nameText = text, error = null) }
 
-    fun setAccountCategory(categoryId: String) = updateDialog { it.copy(categoryId = categoryId, error = null) }
-
-    fun setAccountKind(kind: AssetKind) = updateDialog { it.copy(kind = kind, error = null) }
+    /**
+     * Смена категории счёта.
+     *
+     * Ставка и срок очищаются, если новая категория не подразумевает известного процента:
+     * правило баланса живёт в категории (D-20), и сохранение со ставкой у «Акций» упало бы
+     * на доменной проверке. Лучше убрать поля сразу, чем показывать ошибку постфактум.
+     */
+    fun setAccountCategory(categoryId: String) = updateDialog { dialog ->
+        val projected = _state.value.assetCategories.firstOrNull { it.id == categoryId }
+            ?.balancePolicy?.isProjected == true
+        dialog.copy(
+            categoryId = categoryId,
+            rateText = if (projected) dialog.rateText else "",
+            termText = if (projected) dialog.termText else "",
+            error = null,
+        )
+    }
 
     fun setAccountCurrency(text: String) = updateDialog { it.copy(currencyText = text, error = null) }
 
     fun setAccountRate(text: String) = updateDialog { it.copy(rateText = text, error = null) }
+
+    /** Срок вклада в месяцах; пусто — бессрочно (F4.6, D-21). */
+    fun setAccountTerm(text: String) = updateDialog { it.copy(termText = text, error = null) }
+
+    /** Сумма, положенная на счёт при открытии: создаёт первый остаток месяца (D-21). */
+    fun setAccountInitialBalance(text: String) =
+        updateDialog { it.copy(initialBalanceText = text, error = null) }
 
     fun setAccountNote(text: String) = updateDialog { it.copy(noteText = text) }
 
@@ -233,6 +390,32 @@ class AssetsController(
             updateDialogError("Ставка вводится числом процентов, например 8,5")
             return
         }
+        val termText = dialog.termText.trim()
+        val termMonths = if (termText.isEmpty()) null else termText.toIntOrNull()
+        if (termText.isNotEmpty() && (termMonths == null || termMonths <= 0)) {
+            updateDialogError("Срок вводится числом месяцев, например 12")
+            return
+        }
+        val initialText = dialog.initialBalanceText.trim()
+        val initialBalance = if (initialText.isEmpty()) null else Money.parse(initialText, currency)
+        if (initialText.isNotEmpty() && initialBalance == null) {
+            updateDialogError("Сумма вводится числом, например 500000 или 500 000,50")
+            return
+        }
+        // Вклад без ставки и суммы не имеет смысла: прогнозировать нечего, а база
+        // расписания останется пустой. Домен их не требует, поэтому проверяем здесь (D-21).
+        val isDeposit = _state.value.assetCategories.firstOrNull { it.id == categoryId }
+            ?.balancePolicy?.isProjected == true
+        if (isDeposit) {
+            if (rateBp == null) {
+                updateDialogError("Для вклада укажите годовую ставку, например 16")
+                return
+            }
+            if (initialBalance == null) {
+                updateDialogError("Для вклада укажите сумму, которую положили на счёт")
+                return
+            }
+        }
         val note = dialog.noteText.trim().ifEmpty { null }
         val openedPeriod = _state.value.period
 
@@ -244,10 +427,11 @@ class AssetsController(
                         AccountInput(
                             categoryId = categoryId,
                             name = name,
-                            kind = dialog.kind,
                             currency = currency,
                             openedPeriod = openedPeriod,
                             annualRateBp = rateBp,
+                            termMonths = termMonths,
+                            initialBalance = initialBalance,
                             note = note,
                         ),
                     )
@@ -318,6 +502,7 @@ class AssetsController(
                             header = data.header,
                             groups = data.groups,
                             assetCategories = data.assetCategories,
+                            reminder = data.reminder,
                             notice = notice,
                             error = null,
                         )
@@ -329,16 +514,30 @@ class AssetsController(
     private suspend fun readMonth(period: Period): MonthData {
         val accounts = assets.accounts(includeClosed = true)
         val assetCategories = categories.bySection(CategorySection.ASSET, includeArchived = true)
-        val snapshots = assets.snapshotsForPeriod(period).associateBy { it.accountId }
-        val previous = assets.snapshotsForPeriod(period.minusMonths(1)).associateBy { it.accountId }
+        // Значения месяца считает единый механизм (F4.6, D-21): введённый остаток, прогноз
+        // вклада по ставке, перенос остатка и черновик ручной оценки. Снапшоты читаются до
+        // выбранного месяца включительно — прогноз и перенос опираются на последний факт.
+        val snapshots = assets.snapshotsUpTo(period)
+        val values = AssetBalances.resolve(period, accounts, assetCategories, snapshots)
+            .associateBy { it.accountId }
+        val previous = AssetBalances.resolve(period.minusMonths(1), accounts, assetCategories, snapshots)
+            .associateBy { it.accountId }
+        val recorded = snapshots.filter { it.period == period }.associateBy { it.accountId }
         val totals = assetSummary(period)
 
         // Показываем счёт, если он активен в этом месяце или в нём есть введённый остаток:
-        // закрытые счета не исчезают из истории (F4.5).
-        val visible = accounts.filter { it.isActiveAt(period) || snapshots.containsKey(it.id) }
+        // закрытые счета не исчезают из истории (F4.5). Значение закрытого счёта механизм
+        // не возвращает, поэтому его строка остаётся без суммы (D-19).
+        val visible = accounts.filter { it.isActiveAt(period) || recorded.containsKey(it.id) }
 
         val grouped = assetCategories.mapNotNull { category ->
-            val rows = rowsOf(visible.filter { it.categoryId == category.id }, snapshots, previous)
+            val rows = rowsOf(
+                accounts = visible.filter { it.categoryId == category.id },
+                values = values,
+                previous = previous,
+                recorded = recorded,
+                period = period,
+            )
             if (rows.isEmpty()) {
                 null
             } else {
@@ -353,7 +552,13 @@ class AssetsController(
 
         // Счета категории, которой нет в списке (например, удалённой), не должны теряться.
         val knownIds = assetCategories.map { it.id }.toSet()
-        val orphanRows = rowsOf(visible.filter { it.categoryId !in knownIds }, snapshots, previous)
+        val orphanRows = rowsOf(
+            accounts = visible.filter { it.categoryId !in knownIds },
+            values = values,
+            previous = previous,
+            recorded = recorded,
+            period = period,
+        )
         val groups = if (orphanRows.isEmpty()) {
             grouped
         } else {
@@ -369,35 +574,104 @@ class AssetsController(
             header = headerOf(totals, visible.size),
             groups = groups,
             assetCategories = assetCategories,
+            reminder = reminderOf(period, accounts, values),
         )
     }
 
     private fun rowsOf(
         accounts: List<AssetAccount>,
-        snapshots: Map<String, AssetSnapshot>,
-        previous: Map<String, AssetSnapshot>,
+        values: Map<String, AccountBalance>,
+        previous: Map<String, AccountBalance>,
+        recorded: Map<String, AssetSnapshot>,
+        period: Period,
     ): List<AccountRow> = accounts
-        .map { account -> toRow(account, snapshots[account.id], previous[account.id]) }
+        .map { account ->
+            toRow(account, values[account.id], previous[account.id], recorded[account.id], period)
+        }
         .sortedWith(
-            compareByDescending<AccountRow> { it.balance != null }
+            // Сначала строки со значением, затем по убыванию суммы: порядок читается как
+            // «крупные счета сверху», пустые строки уходят вниз.
+            compareByDescending<AccountRow> { it.isCounted }
                 .thenByDescending { it.balance?.minor ?: Long.MIN_VALUE }
                 .thenBy { it.name },
         )
 
-    private fun toRow(account: AssetAccount, snapshot: AssetSnapshot?, previous: AssetSnapshot?): AccountRow {
-        val balance = snapshot?.balance
-        val previousBalance = previous?.balance
+    private fun toRow(
+        account: AssetAccount,
+        value: AccountBalance?,
+        previous: AccountBalance?,
+        recorded: AssetSnapshot?,
+        period: Period,
+    ): AccountRow {
+        val source = value?.source ?: BalanceSource.MISSING
         return AccountRow(
             accountId = account.id,
             name = account.name,
-            kindLabel = account.kind.titleRu(),
             currency = account.currency,
-            balance = balance,
-            previousBalance = previousBalance,
-            delta = differenceOrNull(balance, previousBalance),
-            contribution = snapshot?.contribution,
+            balance = value?.balance,
+            source = source,
+            badge = badgeOf(value),
+            accruedInterest = value?.accruedInterest,
+            basedOnPeriod = value?.basedOnPeriod,
+            previousBalance = previous?.balance,
+            delta = differenceOrNull(value?.balance, previous?.balance),
+            contribution = recorded?.contribution,
             isClosed = account.closedPeriod != null,
-            snapshotId = snapshot?.id,
+            isActiveInPeriod = account.isActiveAt(period),
+            isMatured = value?.isMatured == true,
+            snapshotId = recorded?.id,
+        )
+    }
+
+    /**
+     * Пометка рядом с суммой: источник значения или окончание срока вклада (F4.6, D-21).
+     *
+     * «Срок истёк» важнее источника: после окончания срока сумма переносится как обычный
+     * остаток, но вклад пора закрывать или продлевать.
+     */
+    private fun badgeOf(value: AccountBalance?): String? {
+        if (value == null) return null
+        if (value.isMatured) return "срок истёк"
+        return value.source.badgeRu()
+    }
+
+    /**
+     * Напоминание обновить стоимость активов (F4.6, D-21).
+     *
+     * Системных уведомлений в v1 нет, поэтому напоминание живёт на экране: оно появляется,
+     * когда в выбранном месяце есть перенесённые черновики. Пока пользователь не ввёл
+     * дельту или сумму, черновики не входят в Net Worth — и баннер объясняет именно это.
+     */
+    private fun reminderOf(
+        period: Period,
+        accounts: List<AssetAccount>,
+        values: Map<String, AccountBalance>,
+    ): AssetReminder? {
+        val drafts = values.values.filter { it.source.isDraft }
+        if (drafts.isEmpty()) return null
+
+        val byId = accounts.associateBy { it.id }
+        val items = drafts.mapNotNull { value ->
+            val account = byId[value.accountId] ?: return@mapNotNull null
+            val balance = value.balance ?: return@mapNotNull null
+            val basedOn = value.basedOnPeriod ?: return@mapNotNull null
+            ReminderAccount(
+                accountId = account.id,
+                name = account.name,
+                currency = account.currency,
+                carriedBalance = balance,
+                basedOnPeriod = basedOn,
+            )
+        }
+        if (items.isEmpty()) return null
+
+        val count = items.size
+        return AssetReminder(
+            period = period,
+            title = "Обновите стоимость: $count ${accountsWord(count)} за ${period.titleRu()}",
+            detail = "Значения перенесены с прошлых месяцев и не учитываются в Net Worth, " +
+                "пока вы их не подтвердите",
+            accounts = items,
         )
     }
 
@@ -429,6 +703,9 @@ class AssetsController(
             gain = main.gain,
             accountCount = accountCount,
             snapshotCount = main.accountCount,
+            // Прогноз вкладов входит в Net Worth, но показывается отдельно (D-21):
+            // пользователь должен видеть, какая часть суммы посчитана, а не введена.
+            projected = main.projected,
             otherCurrencies = others,
         )
     }
@@ -436,6 +713,41 @@ class AssetsController(
     // ── Служебное ────────────────────────────────────────────────────────────
 
     private suspend fun <T> io(block: suspend () -> T): T = withContext(ioDispatcher) { block() }
+
+    /**
+     * Значение, которое будет записано в снапшот (F4.3, F4.6).
+     *
+     * Для черновика переноса поле ввода трактуется по режиму: дельта прибавляется
+     * к перенесённой стоимости, сумма — заменяет её. Пустой ввод подтверждает перенос
+     * как есть. В остальных случаях поле — это остаток месяца целиком.
+     * Возвращает null, если ввод не разобрать: сообщение уже показано в форме.
+     */
+    private fun balanceOf(form: SnapshotFormState): Money? {
+        val carried = form.carriedBalance
+        val text = form.balanceText.trim()
+
+        if (carried == null) {
+            val parsed = Money.parse(text, form.currency)
+            if (parsed == null) {
+                updateFormError("Введите остаток, например 15000 или 15 000,50")
+            }
+            return parsed
+        }
+        if (text.isEmpty()) return carried
+
+        val amount = Money.parse(text, form.currency)
+        if (amount == null) {
+            updateFormError(
+                if (form.mode == BalanceInputMode.DELTA) {
+                    "Изменение стоимости вводится числом: 500 для роста и -250 для снижения"
+                } else {
+                    "Сумма вводится числом, например 15000 или 15 000,50"
+                },
+            )
+            return null
+        }
+        return if (form.mode == BalanceInputMode.DELTA) carried + amount else amount
+    }
 
     private fun updateForm(transform: (SnapshotFormState) -> SnapshotFormState) {
         _state.update { state -> state.copy(snapshotForm = state.snapshotForm?.let(transform)) }
@@ -455,6 +767,7 @@ class AssetsController(
         error = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName,
         snapshotForm = state.snapshotForm?.copy(isSaving = false),
         accountDialog = state.accountDialog?.copy(isSaving = false),
+        confirmBalances = state.confirmBalances?.copy(isSaving = false),
     )
 
     private fun snapshotNotice(result: SnapshotResult, accountName: String): String = when (result) {
@@ -484,12 +797,27 @@ class AssetsController(
         val header: NetWorthHeader,
         val groups: List<AccountGroup>,
         val assetCategories: List<Category>,
+        val reminder: AssetReminder?,
     )
+
+    /** Форма слова «счёт» по-русски: 1 счёт, 2 счёта, 5 счетов, 11 счетов. */
+    private fun accountsWord(count: Int): String {
+        if (count % HUNDRED in ELEVEN..FOURTEEN) return "счетов"
+        return when (count % TEN) {
+            1 -> "счёт"
+            2, 3, 4 -> "счёта"
+            else -> "счетов"
+        }
+    }
 
     private companion object {
         const val NEUTRAL_COLOR = "#7A8189"
         const val ORPHAN_GROUP_ID = ""
         const val RATE_SCALE = 2
+        const val HUNDRED = 100
+        const val TEN = 10
+        const val ELEVEN = 11
+        const val FOURTEEN = 14
     }
 }
 

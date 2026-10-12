@@ -1,6 +1,7 @@
 package app.finance.core.domain
 
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalancePolicy
+import app.finance.core.model.CategorySection
 import app.finance.core.model.Money
 import app.finance.core.model.Period
 import kotlin.test.Test
@@ -22,8 +23,8 @@ class AssetSummaryTest {
 
     @Test
     fun `суммирует балансы месяца, включая отрицательный баланс кредита`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
-        fx.account("credit", "Кредитка", kind = AssetKind.CREDIT)
+        fx.account("deposit", "Вклад")
+        fx.account("credit", "Кредитка")
         fx.snapshot("deposit", feb, balanceMinor = 500_000)
         fx.snapshot("credit", feb, balanceMinor = -75_000)
 
@@ -36,8 +37,8 @@ class AssetSummaryTest {
 
     @Test
     fun `дельта и прирост считаются от прошлого месяца`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
-        fx.account("credit", "Кредитка", kind = AssetKind.CREDIT)
+        fx.account("deposit", "Вклад")
+        fx.account("credit", "Кредитка")
         fx.snapshot("deposit", jan, balanceMinor = 400_000)
         fx.snapshot("credit", jan, balanceMinor = -50_000)
         fx.snapshot("deposit", feb, balanceMinor = 500_000, contributionMinor = 50_000)
@@ -55,7 +56,7 @@ class AssetSummaryTest {
 
     @Test
     fun `снятия уменьшают сумму взносов и оставляют нулевой прирост`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        fx.account("deposit", "Вклад")
         fx.snapshot("deposit", jan, balanceMinor = 130_000)
         fx.snapshot("deposit", feb, balanceMinor = 100_000, contributionMinor = -30_000)
 
@@ -68,8 +69,8 @@ class AssetSummaryTest {
 
     @Test
     fun `новый счёт без снапшота в прошлом месяце не ломает расчёт`() = runTest {
-        fx.account("old", "Старый вклад", kind = AssetKind.DEPOSIT)
-        fx.account("new", "Новый счёт", kind = AssetKind.BROKERAGE)
+        fx.account("old", "Старый вклад")
+        fx.account("new", "Новый счёт")
         fx.snapshot("old", jan, balanceMinor = 100_000)
         fx.snapshot("old", feb, balanceMinor = 110_000)
         fx.snapshot("new", feb, balanceMinor = 50_000, contributionMinor = 50_000)
@@ -86,7 +87,7 @@ class AssetSummaryTest {
 
     @Test
     fun `без прошлого месяца дельта и прирост отсутствуют, а не равны нулю`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        fx.account("deposit", "Вклад")
         fx.snapshot("deposit", feb, balanceMinor = 100_000)
 
         val rub = requireNotNull(fx.assetSummary(feb).of())
@@ -99,8 +100,8 @@ class AssetSummaryTest {
 
     @Test
     fun `валюты не смешиваются, основная идёт первой`() = runTest {
-        fx.account("rub", "Вклад", kind = AssetKind.DEPOSIT)
-        fx.account("usd", "Брокер USD", kind = AssetKind.BROKERAGE, currency = "USD")
+        fx.account("rub", "Вклад")
+        fx.account("usd", "Брокер USD", currency = "USD")
         fx.snapshot("usd", feb, balanceMinor = 2_000, currency = "USD")
         fx.snapshot("rub", feb, balanceMinor = 100_000)
 
@@ -116,7 +117,7 @@ class AssetSummaryTest {
 
     @Test
     fun `пустой месяц не даёт итогов`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        fx.account("deposit", "Вклад")
 
         val totals = fx.assetSummary(feb)
 
@@ -127,19 +128,36 @@ class AssetSummaryTest {
     }
 
     @Test
-    fun `в месяце без снапшотов итогов нет - балансы не переносятся`() = runTest {
-        // Переноса остатков нет: февраль не введён — значит итога за февраль тоже нет.
-        // Для переноса существует «Дублировать прошлый месяц» (F5.3).
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
-        fx.snapshot("deposit", jan, balanceMinor = 100_000)
+    fun `значение месяца переносится по правилу категории`() = runTest {
+        // D-21: актив без роста переносится и учитывается в итогах, а стоимость актива
+        // с ручной оценкой переносится черновиком и не считается до подтверждения.
+        fx.category(
+            "cash",
+            "Наличные",
+            section = CategorySection.ASSET,
+            balancePolicy = AssetBalancePolicy.FLAT,
+        )
+        fx.category(
+            "shares",
+            "Паи",
+            section = CategorySection.ASSET,
+            balancePolicy = AssetBalancePolicy.MANUAL_VALUATION,
+        )
+        fx.account("cash", "Наличные", categoryId = "cash")
+        fx.account("shares", "Паи", categoryId = "shares")
+        fx.snapshot("cash", jan, balanceMinor = 100_000)
+        fx.snapshot("shares", jan, balanceMinor = 250_000)
 
-        assertTrue(fx.assetSummary(feb).isEmpty)
-        assertTrue(fx.assetSummary(jan).totals.isNotEmpty())
+        val carried = requireNotNull(fx.assetSummary(feb).of())
+
+        assertEquals(Money(100_000), carried.netWorth, "Перенос обычного актива учитывается")
+        assertEquals(1, carried.accountCount, "Черновик ручной оценки в итоги не входит")
+        assertEquals(2, requireNotNull(fx.assetSummary(jan).of()).accountCount, "В январе оба значения введены")
     }
 
     @Test
     fun `взносы без явного значения не меняют сумму`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        fx.account("deposit", "Вклад")
         fx.snapshot("deposit", jan, balanceMinor = 100_000)
         fx.snapshot("deposit", feb, balanceMinor = 120_000)
 

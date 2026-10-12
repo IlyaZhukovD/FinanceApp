@@ -44,6 +44,8 @@ class SqlCategoryRepository(
             color = category.color,
             icon = category.icon,
             sort_order = category.sortOrder.toLong(),
+            balance_policy = category.balancePolicy.name,
+            allows_negative_balance = category.allowsNegativeBalance,
             is_archived = category.isArchived,
             created_at_utc = category.createdAtUtc,
             updated_at_utc = category.updatedAtUtc,
@@ -58,6 +60,8 @@ class SqlCategoryRepository(
             color = category.color,
             icon = category.icon,
             sort_order = category.sortOrder.toLong(),
+            balance_policy = category.balancePolicy.name,
+            allows_negative_balance = category.allowsNegativeBalance,
             updated_at_utc = category.updatedAtUtc,
             id = category.id,
         )
@@ -97,6 +101,15 @@ class SqlLedgerRepository(
 
     override suspend fun cellsForPeriod(section: LedgerSection, period: Period): List<CategoryMonthCell> =
         cells.selectForPeriod(section = section.name, period = period.toDbKey())
+            .executeAsList().map { it.toDomain() }
+
+    override suspend fun cellsInRange(
+        section: LedgerSection,
+        from: Period,
+        to: Period,
+    ): List<CategoryMonthCell> =
+        // Параметры SQLDelight для двух плейсхолдеров одной колонки: period и period_.
+        cells.selectForRange(section = section.name, period = from.toDbKey(), period_ = to.toDbKey())
             .executeAsList().map { it.toDomain() }
 
     override suspend fun cellById(id: String): CategoryMonthCell? =

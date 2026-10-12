@@ -6,7 +6,7 @@ import app.finance.core.data.db.Category as CategoryRow
 import app.finance.core.data.db.Category_month as CellRow
 import app.finance.core.data.db.Category_month_revision as RevisionRow
 import app.finance.core.model.AssetAccount
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
 import app.finance.core.model.Category
 import app.finance.core.model.CategoryMonthCell
@@ -33,6 +33,8 @@ internal fun CategoryRow.toDomain(): Category = Category(
     icon = icon,
     parentId = parent_id,
     sortOrder = sort_order.toInt(),
+    balancePolicy = AssetBalancePolicy.valueOf(balance_policy),
+    allowsNegativeBalance = allows_negative_balance,
     isArchived = is_archived,
     createdAtUtc = created_at_utc,
     updatedAtUtc = updated_at_utc,
@@ -68,18 +70,16 @@ internal fun RevisionRow.toDomain(): CategoryMonthRevision = CategoryMonthRevisi
     createdAtUtc = created_at_utc,
 )
 
-/**
- * Счёт активов. `kind` хранится TEXT-именем перечисления.
- */
+/** Счёт активов. */
 internal fun AccountRow.toDomain(): AssetAccount = AssetAccount(
     id = id,
     categoryId = category_id,
     name = name,
-    kind = AssetKind.valueOf(kind),
     currency = currency,
     openedPeriod = Period.ofKey(opened_period.toInt()),
     closedPeriod = closed_period?.toInt()?.let(Period::ofKey),
     annualRateBp = annual_rate_bp?.toInt(),
+    termMonths = term_months?.toInt(),
     note = note,
     createdAtUtc = created_at_utc,
     updatedAtUtc = updated_at_utc,

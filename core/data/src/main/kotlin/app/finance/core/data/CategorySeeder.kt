@@ -3,6 +3,7 @@ package app.finance.core.data
 import app.finance.core.domain.CategoryRepository
 import app.finance.core.domain.IdGenerator
 import app.finance.core.domain.TimeProvider
+import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.Category
 import app.finance.core.model.CategorySection
 
@@ -36,6 +37,7 @@ class CategorySeeder(
                         name = name,
                         color = Category.defaultColor(index),
                         sortOrder = index,
+                        balancePolicy = policyOf(section, name),
                         createdAtUtc = now,
                         updatedAtUtc = now,
                     ),
@@ -62,5 +64,30 @@ class CategorySeeder(
         )
 
         val EXPECTED_TOTAL: Int = DEFAULTS.values.sumOf { it.size }
+
+        /**
+         * Правила баланса стартовых категорий активов (D-20). Совпадают с миграцией `1.sqm`,
+         * чтобы свежая база и мигрированная вели себя одинаково. «Наличные» и «Прочее»
+         * намеренно не перечислены: для них действует значение по умолчанию
+         * [AssetBalancePolicy.FLAT] — такие активы не растут.
+         */
+        val ASSET_POLICIES: Map<String, AssetBalancePolicy> = mapOf(
+            "Вклады" to AssetBalancePolicy.FIXED_RATE,
+            "Брокерский счёт" to AssetBalancePolicy.MANUAL_VALUATION,
+            "ИИС и паи" to AssetBalancePolicy.MANUAL_VALUATION,
+            "Недвижимость" to AssetBalancePolicy.MANUAL_VALUATION,
+        )
+
+        /**
+         * Правило баланса новой категории. У потоковых секций (расходы, доходы) баланса нет,
+         * поэтому им всегда возвращается [AssetBalancePolicy.DEFAULT]: `Category.init`
+         * запрещает иное сочетание (D-20).
+         */
+        fun policyOf(section: CategorySection, name: String): AssetBalancePolicy =
+            if (section == CategorySection.ASSET) {
+                ASSET_POLICIES[name] ?: AssetBalancePolicy.DEFAULT
+            } else {
+                AssetBalancePolicy.DEFAULT
+            }
     }
 }

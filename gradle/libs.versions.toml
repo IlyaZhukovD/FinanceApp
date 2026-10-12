@@ -1,0 +1,26 @@
+[versions]
+# Подтверждено по maven-metadata.xml на Maven Central (последние стабильные, без RC/beta).
+# Совместимость пары Compose Multiplatform <-> Kotlin проверяется первой сборкой;
+# запасной вариант: compose 1.11.1 + kotlin 2.3.21 (см. docs/DECISIONS.md, D-10).
+kotlin = "2.4.20"
+compose = "1.12.0"
+sqldelight = "2.3.2"
+coroutines = "1.11.0"
+# Ветка JUnit 5, а не 6: её kotlin-test выбирает автоматически, меньше риск на первой сборке.
+junit = "5.14.4"
+
+[libraries]
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+# Dispatchers.Main на десктопе — это Swing EDT и живёт в отдельном артефакте.
+coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions-jvm", version.ref = "sqldelight" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+compose = { id = "org.jetbrains.compose", version.ref = "compose" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }

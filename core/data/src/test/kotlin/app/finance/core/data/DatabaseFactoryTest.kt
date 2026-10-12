@@ -94,6 +94,8 @@ class DatabaseFactoryTest {
                 updated_at_utc = 1,
                 row_version = 1,
                 deleted_at_utc = null,
+                balance_policy = "FLAT",
+                allows_negative_balance = false,
             )
 
             assertTrue(Files.exists(dbPath), "Файл базы должен быть создан")

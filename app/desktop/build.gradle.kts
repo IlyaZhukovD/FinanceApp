@@ -31,6 +31,12 @@ dependencies {
     implementation(project(":feature:expenses"))
     implementation(project(":feature:income"))
     implementation(project(":feature:assets"))
+    // Аналитика: core:analytics приходит транзитивно через feature:analytics (api).
+    implementation(project(":feature:analytics"))
+    // Управление категориями (F3.1): граф создаёт по контроллеру на каждую секцию.
+    implementation(project(":feature:categories"))
+    // Настройки: выбор активной базы данных.
+    implementation(project(":feature:settings"))
 
     implementation(libs.coroutines.core)
     // Без него запуск окна падает: "Module with the Main dispatcher is missing".

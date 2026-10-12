@@ -22,6 +22,8 @@ dependencies {
     // счёта (SPEC.md F4, DECISIONS D-12). Компоненты core:ui при этом переиспользуются.
     api(project(":core:ui"))
     api(project(":core:domain"))
+    // Категории активов (F3.1) управляются тем же диалогом, что и в расходах/доходах.
+    api(project(":feature:categories"))
     implementation(project(":core:model"))
     implementation(libs.coroutines.core)
 

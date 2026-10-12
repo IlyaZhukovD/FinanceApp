@@ -1,6 +1,6 @@
 package app.finance.core.domain
 
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.CategorySection
 import app.finance.core.model.Money
 import app.finance.core.model.Period
@@ -24,13 +24,26 @@ class AssetAccountTest {
     private val feb = Period(2026, 2)
     private val mar = Period(2026, 3)
 
-    private fun assetCategory(id: String = "assets", name: String = "Банки", archived: Boolean = false) =
-        fx.category(id, name, section = CategorySection.ASSET, archived = archived)
+    /**
+     * Категория активов для тестов счетов. По умолчанию с известным процентом: годовая
+     * ставка разрешена только таким категориям (D-20), а большинство тестов заводят вклад.
+     */
+    private fun assetCategory(
+        id: String = "assets",
+        name: String = "Банки",
+        archived: Boolean = false,
+        balancePolicy: AssetBalancePolicy = AssetBalancePolicy.FIXED_RATE,
+    ) = fx.category(
+        id,
+        name,
+        section = CategorySection.ASSET,
+        archived = archived,
+        balancePolicy = balancePolicy,
+    )
 
     private fun input(
         categoryId: String,
         name: String = "Вклад Т—Ж",
-        kind: AssetKind = AssetKind.DEPOSIT,
         currency: String = Money.DEFAULT_CURRENCY,
         openedPeriod: Period = jan,
         annualRateBp: Int? = null,
@@ -38,7 +51,6 @@ class AssetAccountTest {
     ) = AccountInput(
         categoryId = categoryId,
         name = name,
-        kind = kind,
         currency = currency,
         openedPeriod = openedPeriod,
         annualRateBp = annualRateBp,
@@ -55,7 +67,6 @@ class AssetAccountTest {
 
         assertEquals(category.id, account.categoryId)
         assertEquals("Вклад Т—Ж", account.name, "Название обрезается по краям")
-        assertEquals(AssetKind.DEPOSIT, account.kind)
         assertEquals(Money.DEFAULT_CURRENCY, account.currency)
         assertEquals(jan, account.openedPeriod)
         assertEquals(850, account.annualRateBp)
@@ -106,13 +117,15 @@ class AssetAccountTest {
     }
 
     @Test
-    fun `годовая ставка допустима только для вклада и не может быть отрицательной`() = runTest {
+    fun `годовая ставка допустима только в категории с известным процентом и не может быть отрицательной`() = runTest {
         assetCategory()
+        assetCategory(id = "stocks", name = "Акции", balancePolicy = AssetBalancePolicy.MANUAL_VALUATION)
 
-        val wrongKind = assertFailsWith<IllegalArgumentException> {
-            fx.createAccount(input(categoryId = "assets", kind = AssetKind.BROKERAGE, annualRateBp = 500))
+        // Доходность категории заранее неизвестна, поэтому считать её по ставке нельзя (D-20).
+        val wrongPolicy = assertFailsWith<IllegalArgumentException> {
+            fx.createAccount(input(categoryId = "stocks", annualRateBp = 500))
         }
-        assertTrue(wrongKind.message!!.contains("только для вклада"), "Сообщение: ${wrongKind.message}")
+        assertTrue(wrongPolicy.message!!.contains("известным процентом"), "Сообщение: ${wrongPolicy.message}")
 
         val negative = assertFailsWith<IllegalArgumentException> {
             fx.createAccount(input(categoryId = "assets", annualRateBp = -1))
@@ -122,7 +135,7 @@ class AssetAccountTest {
 
     @Test
     fun `закрытие счёта сохраняет историю снапшотов`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT, openedPeriod = jan)
+        val account = fx.account("deposit", "Вклад", openedPeriod = jan)
         fx.snapshot("deposit", jan, balanceMinor = 100_000)
         fx.snapshot("deposit", feb, balanceMinor = 105_000)
 
@@ -136,15 +149,16 @@ class AssetAccountTest {
             listOf(jan, feb),
             fx.assets.snapshotsByAccount(account.id).map { it.period },
         )
-        // Счёт активен по месяц закрытия включительно и не активен позже.
-        assertTrue(closed.isActiveAt(feb))
+        // Закрыт С февраля (D-19): месяц закрытия в активные уже не входит.
+        assertTrue(closed.isActiveAt(jan))
+        assertFalse(closed.isActiveAt(feb))
         assertFalse(closed.isActiveAt(mar))
     }
 
     @Test
     fun `закрытый счёт исключается из активных, но виден в полном списке`() = runTest {
-        fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT, openedPeriod = jan)
-        val closing = fx.account("cash", "Наличные", kind = AssetKind.CASH, openedPeriod = jan)
+        fx.account("deposit", "Вклад", openedPeriod = jan)
+        val closing = fx.account("cash", "Наличные", openedPeriod = jan)
 
         fx.closeAccount(closing.id, feb)
 
@@ -157,7 +171,7 @@ class AssetAccountTest {
 
     @Test
     fun `повторное закрытие отклоняется`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT, openedPeriod = jan, closedPeriod = feb)
+        val account = fx.account("deposit", "Вклад", openedPeriod = jan, closedPeriod = feb)
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.closeAccount(account.id, mar)
@@ -169,7 +183,7 @@ class AssetAccountTest {
 
     @Test
     fun `период закрытия раньше открытия отклоняется`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT, openedPeriod = feb)
+        val account = fx.account("deposit", "Вклад", openedPeriod = feb)
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.closeAccount(account.id, jan)

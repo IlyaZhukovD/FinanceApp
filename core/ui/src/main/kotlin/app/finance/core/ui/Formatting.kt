@@ -1,6 +1,7 @@
 package app.finance.core.ui
 
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalancePolicy
+import app.finance.core.model.BalanceSource
 import app.finance.core.model.LedgerSection
 import app.finance.core.model.Money
 import app.finance.core.model.Period
@@ -98,16 +99,40 @@ fun LedgerSection.titleRu(): String = when (this) {
     LedgerSection.INCOME -> "Доходы"
 }
 
-/** Подпись типа счёта активов (SPEC.md F4.2). */
-fun AssetKind.titleRu(): String = when (this) {
-    AssetKind.DEPOSIT -> "Вклад"
-    AssetKind.BROKERAGE -> "Брокерский счёт"
-    AssetKind.FUND -> "Фонд"
-    AssetKind.IIS -> "ИИС"
-    AssetKind.CASH -> "Наличные"
-    AssetKind.CREDIT -> "Кредит"
-    AssetKind.REAL_ESTATE -> "Недвижимость"
-    AssetKind.OTHER -> "Прочее"
+/**
+ * Короткая подпись правила баланса категории активов (SPEC.md F4.6, D-20).
+ *
+ * Формулировки отвечают на вопрос пользователя «что будет с суммой в следующем месяце»,
+ * а не пересказывают имена значений перечисления.
+ */
+fun AssetBalancePolicy.titleRu(): String = when (this) {
+    AssetBalancePolicy.FIXED_RATE -> "Процент известен"
+    AssetBalancePolicy.MANUAL_VALUATION -> "Оценка вручную"
+    AssetBalancePolicy.FLAT -> "Без роста"
+}
+
+/** Пояснение к правилу баланса: показывается под выбором в редакторе категории. */
+fun AssetBalancePolicy.hintRu(): String = when (this) {
+    AssetBalancePolicy.FIXED_RATE ->
+        "Вклад: ставка и срок задаются у счёта, сумма следующих месяцев считается сама"
+    AssetBalancePolicy.MANUAL_VALUATION ->
+        "Акции, паи, валюта: сумма переносится с прошлого месяца и ждёт вашего подтверждения"
+    AssetBalancePolicy.FLAT ->
+        "Наличные и подобное: сумма переносится как есть, без напоминаний"
+}
+
+/**
+ * Пометка источника значения счёта (F4.6, D-21).
+ *
+ * Факт и отсутствие данных не помечаются: пометка нужна ровно там, где сумма получена
+ * расчётом или переносом, чтобы прогноз вклада не выглядел введённым остатком.
+ */
+fun BalanceSource.badgeRu(): String? = when (this) {
+    BalanceSource.RECORDED -> null
+    BalanceSource.PROJECTED -> "прогноз"
+    BalanceSource.CARRIED -> "перенесено"
+    BalanceSource.CARRIED_DRAFT -> "черновик"
+    BalanceSource.MISSING -> null
 }
 
 /** Метка времени ревизии в часовом поясе пользователя: «09.02.2026 14:35». */

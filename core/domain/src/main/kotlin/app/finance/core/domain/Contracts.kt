@@ -53,6 +53,15 @@ interface LedgerRepository {
     /** Только живые ячейки месяца (без tombstone), отсортированные по убыванию суммы. */
     suspend fun cellsForPeriod(section: LedgerSection, period: Period): List<CategoryMonthCell>
 
+    /**
+     * Живые ячейки диапазона `[from, to]` включительно (SPEC.md §5).
+     *
+     * Единственный источник данных аналитики. SQL здесь только выбирает строки: ячейка
+     * `(category, period)` уникальна, поэтому агрегировать нечего, а все суммы, доли и
+     * метрики считаются чистыми функциями `core:analytics` (F6.4).
+     */
+    suspend fun cellsInRange(section: LedgerSection, from: Period, to: Period): List<CategoryMonthCell>
+
     suspend fun cellById(id: String): CategoryMonthCell?
 
     suspend fun insertCell(cell: CategoryMonthCell)
@@ -99,6 +108,22 @@ interface AssetRepository {
 
     /** История счёта по месяцам, от старых к новым (F4.4). */
     suspend fun snapshotsByAccount(accountId: String): List<AssetSnapshot>
+
+    /**
+     * Живые снапшоты диапазона `[from, to]` включительно, упорядоченные по месяцу.
+     *
+     * Для серий капитала (F6.1.6). Месяцы без снапшотов в выборку не попадают: пропуск —
+     * это gap, а не ноль (SPEC.md §5), и `core:analytics` сохраняет разрыв серии.
+     */
+    suspend fun snapshotsInRange(from: Period, to: Period): List<AssetSnapshot>
+
+    /**
+     * Живые снапшоты всех счетов до [period] включительно, от старых к новым.
+     *
+     * Нужны правилам перехода месяца (F4.6, D-21): прогноз вклада и перенос остатка
+     * считаются от последнего введённого значения, поэтому одного месяца недостаточно.
+     */
+    suspend fun snapshotsUpTo(period: Period): List<AssetSnapshot>
 
     suspend fun insertSnapshot(snapshot: AssetSnapshot)
 

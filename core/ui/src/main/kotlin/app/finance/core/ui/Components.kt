@@ -244,6 +244,45 @@ fun SectionNotReady(title: String, milestone: String, modifier: Modifier = Modif
     }
 }
 
+/** Тон индикатора состояния данных. */
+enum class StatusTone { OK, WARNING, ERROR }
+
+/**
+ * Индикатор состояния хранилища в подвале боковой панели.
+ *
+ * Пользователь должен видеть, где его данные и всё ли с ними в порядке, не заходя в
+ * настройки. В v1 данные всегда локальны, поэтому тон [StatusTone.OK]; предупреждение и
+ * ошибка зарезервированы для бэкапа на Яндекс.Диск (M6): жёлтый — копия устарела или идёт
+ * выгрузка, красный — записать копию не удалось.
+ */
+@Composable
+fun SyncStatusFooter(text: String, modifier: Modifier = Modifier, tone: StatusTone = StatusTone.OK) {
+    val color = when (tone) {
+        StatusTone.OK -> FinancePalette.Success
+        StatusTone.WARNING -> FinancePalette.Warning
+        StatusTone.ERROR -> FinancePalette.Error
+    }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FinanceSpace.Sm),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(STATUS_DOT_SIZE)
+                .background(color = color, shape = CircleShape),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = FinancePalette.TextSecondary,
+        )
+    }
+}
+
+private val STATUS_DOT_SIZE = 8.dp
+
 /**
  * Разбор цвета категории из БД (`#RRGGBB`). Значение приходит из пользовательских
  * данных, поэтому недопустимый формат не должен ронять экран.

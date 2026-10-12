@@ -1,6 +1,6 @@
 package app.finance.core.domain
 
-import app.finance.core.model.AssetKind
+import app.finance.core.model.CategorySection
 import app.finance.core.model.Money
 import app.finance.core.model.Period
 import kotlin.test.Test
@@ -38,7 +38,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `первый ввод создаёт снапшот`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        val account = fx.account("deposit", "Вклад")
 
         val result = fx.recordSnapshot(input(account.id, balance = Money(250_000), note = "  пополнение  "))
 
@@ -54,7 +54,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `повторный ввод за тот же месяц правит существующий снапшот`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        val account = fx.account("deposit", "Вклад")
         val existing = fx.snapshot(account.id, feb, balanceMinor = 200_000)
 
         val result = fx.recordSnapshot(input(account.id, balance = Money(240_000)))
@@ -69,7 +69,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `ввод за другой месяц создаёт отдельный снапшот`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        val account = fx.account("deposit", "Вклад")
         fx.snapshot(account.id, feb, balanceMinor = 200_000)
 
         val result = fx.recordSnapshot(input(account.id, period = mar, balance = Money(210_000)))
@@ -84,7 +84,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `нулевой баланс допустим`() = runTest {
-        val account = fx.account("cash", "Наличные", kind = AssetKind.CASH)
+        val account = fx.account("cash", "Наличные")
 
         val result = fx.recordSnapshot(input(account.id, balance = Money.ZERO))
 
@@ -93,7 +93,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `взнос сохраняется вместе с балансом`() = runTest {
-        val account = fx.account("broker", "Брокер", kind = AssetKind.BROKERAGE)
+        val account = fx.account("broker", "Брокер")
 
         val result = fx.recordSnapshot(
             input(account.id, balance = Money(500_000), contribution = Money(150_000)),
@@ -103,9 +103,12 @@ class RecordSnapshotTest {
     }
 
     @Test
-    fun `отрицательный баланс разрешён только для кредита`() = runTest {
-        val deposit = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
-        val credit = fx.account("credit", "Кредитка", kind = AssetKind.CREDIT)
+    fun `отрицательный баланс разрешает только категория с правом на минус`() = runTest {
+        val deposit = fx.account("deposit", "Вклад")
+        // Право на минус задаёт категория (D-20, D-22): кредит — это счёт в категории
+        // с разрешённым отрицательным остатком, собственного признака у счёта нет.
+        fx.category("credits", "Кредиты", section = CategorySection.ASSET, allowsNegativeBalance = true)
+        val credit = fx.account("credit", "Кредитка", categoryId = "credits")
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.recordSnapshot(input(deposit.id, balance = Money(-1_000)))
@@ -127,7 +130,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `период до открытия счёта отклоняется`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT, openedPeriod = feb)
+        val account = fx.account("deposit", "Вклад", openedPeriod = feb)
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.recordSnapshot(input(account.id, period = jan))
@@ -136,8 +139,8 @@ class RecordSnapshotTest {
     }
 
     @Test
-    fun `период после закрытия счёта отклоняется`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT, closedPeriod = feb)
+    fun `месяц закрытия счёта и позже отклоняются`() = runTest {
+        val account = fx.account("deposit", "Вклад", closedPeriod = feb)
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.recordSnapshot(input(account.id, period = mar))
@@ -145,14 +148,20 @@ class RecordSnapshotTest {
         assertTrue(error.message!!.contains("не активен"), "Сообщение: ${error.message}")
         assertTrue(error.message!!.contains("закрыт"), "Сообщение: ${error.message}")
 
-        // Последний месяц жизни счёта остаётся доступным для ввода.
-        val accepted = fx.recordSnapshot(input(account.id, period = feb, balance = Money(10_000)))
-        assertEquals(feb, accepted.snapshot.period)
+        // Счёт закрыт с февраля (D-19): в месяце закрытия остатка уже нет.
+        val closing = assertFailsWith<IllegalArgumentException> {
+            fx.recordSnapshot(input(account.id, period = feb, balance = Money(10_000)))
+        }
+        assertTrue(closing.message!!.contains("закрыт"), "Сообщение: ${closing.message}")
+
+        // Последний активный месяц — январь, до закрытия.
+        val accepted = fx.recordSnapshot(input(account.id, period = jan, balance = Money(10_000)))
+        assertEquals(jan, accepted.snapshot.period)
     }
 
     @Test
     fun `валюта баланса должна совпадать с валютой счёта`() = runTest {
-        val account = fx.account("usd", "Брокер USD", kind = AssetKind.BROKERAGE, currency = "USD")
+        val account = fx.account("usd", "Брокер USD", currency = "USD")
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.recordSnapshot(input(account.id, balance = Money(100_000, "RUB")))
@@ -162,7 +171,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `валюта взноса должна совпадать с валютой счёта`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        val account = fx.account("deposit", "Вклад")
 
         val error = assertFailsWith<IllegalArgumentException> {
             fx.recordSnapshot(input(account.id, balance = Money(100_000), contribution = Money(5_000, "USD")))
@@ -172,7 +181,7 @@ class RecordSnapshotTest {
 
     @Test
     fun `пустая заметка не сохраняется`() = runTest {
-        val account = fx.account("deposit", "Вклад", kind = AssetKind.DEPOSIT)
+        val account = fx.account("deposit", "Вклад")
 
         val created = fx.recordSnapshot(input(account.id, note = "   "))
         assertNull(created.snapshot.note)
@@ -186,7 +195,7 @@ class RecordSnapshotTest {
     fun `правка без взноса сбрасывает прежний взнос`() = runTest {
         // Взнос относится к конкретному вводу: если пользователь его не повторил,
         // считать его занесённым повторно нельзя — иначе прирост будет занижен.
-        val account = fx.account("broker", "Брокер", kind = AssetKind.BROKERAGE)
+        val account = fx.account("broker", "Брокер")
         fx.snapshot(account.id, feb, balanceMinor = 100_000, contributionMinor = 40_000)
 
         val result = fx.recordSnapshot(input(account.id, balance = Money(110_000)))

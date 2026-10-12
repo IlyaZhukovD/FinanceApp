@@ -3,6 +3,7 @@ package app.finance.feature.income
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.finance.core.model.LedgerSection
+import app.finance.feature.categories.CategoriesController
 import app.finance.feature.ledger.LedgerController
 import app.finance.feature.ledger.LedgerScreen
 
@@ -21,6 +22,10 @@ object IncomeSection {
 }
 
 @Composable
-fun IncomeScreen(controller: LedgerController, modifier: Modifier = Modifier) {
-    LedgerScreen(controller = controller, modifier = modifier)
+fun IncomeScreen(
+    controller: LedgerController,
+    categories: CategoriesController,
+    modifier: Modifier = Modifier,
+) {
+    LedgerScreen(controller = controller, categories = categories, modifier = modifier)
 }

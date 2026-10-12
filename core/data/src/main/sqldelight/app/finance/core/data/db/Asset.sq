@@ -2,7 +2,6 @@ CREATE TABLE asset_account (
     id TEXT NOT NULL PRIMARY KEY,
     category_id TEXT NOT NULL REFERENCES category(id),
     name TEXT NOT NULL,
-    kind TEXT NOT NULL,
     currency TEXT NOT NULL DEFAULT 'RUB',
     opened_period INTEGER NOT NULL,
     closed_period INTEGER,
@@ -11,7 +10,11 @@ CREATE TABLE asset_account (
     created_at_utc INTEGER NOT NULL,
     updated_at_utc INTEGER NOT NULL,
     row_version INTEGER NOT NULL DEFAULT 1,
-    deleted_at_utc INTEGER
+    deleted_at_utc INTEGER,
+    -- Срок вклада в месяцах (F4.6, D-21). Колонка добавлена миграцией `2.sqm` и обязана
+    -- стоять В КОНЦЕ: запросы используют SELECT *, а маппер разбирает строку по порядку
+    -- колонок из этого файла, тогда как ALTER TABLE дописывает колонки в конец таблицы.
+    term_months INTEGER
 );
 
 CREATE INDEX idx_asset_account_category ON asset_account(category_id);
@@ -59,14 +62,15 @@ ORDER BY name;
 
 insertAccount:
 INSERT INTO asset_account (
-    id, category_id, name, kind, currency, opened_period, closed_period,
-    annual_rate_bp, note, created_at_utc, updated_at_utc, row_version, deleted_at_utc
+    id, category_id, name, currency, opened_period, closed_period,
+    annual_rate_bp, note, created_at_utc, updated_at_utc, row_version, deleted_at_utc,
+    term_months
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 updateAccount:
 UPDATE asset_account
-SET name = ?, category_id = ?, kind = ?, currency = ?, annual_rate_bp = ?, note = ?,
-    updated_at_utc = ?, row_version = row_version + 1
+SET name = ?, category_id = ?, currency = ?, annual_rate_bp = ?, note = ?,
+    term_months = ?, updated_at_utc = ?, row_version = row_version + 1
 WHERE id = ?;
 
 closeAccount:
@@ -95,6 +99,15 @@ selectSnapshotsInRange:
 SELECT *
 FROM asset_snapshot
 WHERE period >= ? AND period <= ? AND deleted_at_utc IS NULL
+ORDER BY period;
+
+-- Снапшоты до указанного месяца включительно: нужны правила перехода месяца (F4.6, D-21) —
+-- прогноз вклада и перенос остатка считаются от последнего введённого значения, поэтому
+-- одного месяца недостаточно.
+selectSnapshotsUpTo:
+SELECT *
+FROM asset_snapshot
+WHERE period <= ? AND deleted_at_utc IS NULL
 ORDER BY period;
 
 insertSnapshot:

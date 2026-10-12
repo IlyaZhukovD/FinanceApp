@@ -2,6 +2,13 @@
 .gradle/
 build/
 
+# Кэш Gradle user home, случайно созданный внутри проекта (рабочий home — ~/.gradle).
+# gradle/wrapper/ и gradle/libs.versions.toml при этом остаются частью проекта.
+gradle/caches/
+gradle/daemon/
+gradle/native/
+gradle/wrapper/dists/
+
 # Локальный тулчейн (скачанный Gradle) — не часть проекта
 .tools/
 
@@ -17,6 +24,11 @@ out/
 backups/
 logs/
 settings.local.json
+
+# Исключение из правила выше: базовый файл схемы SQLDelight `1.db` — эталон схемы v1
+# без единой строки данных (все таблицы очищены, user_version = 1). Он требуется задаче
+# verifyMigrations на каждой сборке, поэтому является частью проекта, а не данными.
+!core/data/src/main/sqldelight/**/*.db
 
 # macOS
 .DS_Store

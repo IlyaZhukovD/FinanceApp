@@ -1,7 +1,7 @@
 package app.finance.core.domain
 
 import app.finance.core.model.AssetAccount
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
 import app.finance.core.model.Category
 import app.finance.core.model.CategoryMonthCell
@@ -82,6 +82,15 @@ class FakeLedgerRepository : LedgerRepository {
     override suspend fun cellsForPeriod(section: LedgerSection, period: Period): List<CategoryMonthCell> =
         live().filter { it.section == section && it.period == period }
             .sortedByDescending { it.amount.minor }
+
+    override suspend fun cellsInRange(
+        section: LedgerSection,
+        from: Period,
+        to: Period,
+    ): List<CategoryMonthCell> =
+        live().filter { it.section == section && it.period >= from && it.period <= to }
+            // Порядок как в selectForRange: по месяцу, внутри месяца по убыванию суммы.
+            .sortedWith(compareBy<CategoryMonthCell> { it.period }.thenByDescending { it.amount.minor })
 
     override suspend fun cellById(id: String): CategoryMonthCell? = cells[id]
 
@@ -169,6 +178,16 @@ class FakeAssetRepository : AssetRepository {
     override suspend fun snapshotsByAccount(accountId: String): List<AssetSnapshot> =
         liveSnapshots().filter { it.accountId == accountId }.sortedBy { it.period }
 
+    override suspend fun snapshotsInRange(from: Period, to: Period): List<AssetSnapshot> =
+        liveSnapshots().filter { it.period >= from && it.period <= to }
+            // Порядок как в selectSnapshotsInRange: по месяцу.
+            .sortedWith(compareBy<AssetSnapshot> { it.period }.thenByDescending { it.balance.minor })
+
+    override suspend fun snapshotsUpTo(period: Period): List<AssetSnapshot> =
+        liveSnapshots().filter { it.period <= period }
+            // Порядок как в selectSnapshotsUpTo: по месяцу.
+            .sortedBy { it.period }
+
     override suspend fun insertSnapshot(snapshot: AssetSnapshot) {
         val clash = liveSnapshots().firstOrNull {
             it.accountId == snapshot.accountId && it.period == snapshot.period && it.id != snapshot.id
@@ -200,10 +219,10 @@ class DomainFixture {
     val deleteCell = DeleteCell(ledger, ids, time, transactions)
     val restoreCell = RestoreCell(ledger, ids, time, transactions)
     val duplicatePeriod = DuplicatePeriod(categories, ledger, ids, time, transactions)
-    val recordSnapshot = RecordSnapshot(assets, ids, time, transactions)
+    val recordSnapshot = RecordSnapshot(assets, categories, ids, time, transactions)
     val createAccount = CreateAccount(categories, assets, ids, time, transactions)
     val closeAccount = CloseAccount(assets, time, transactions)
-    val assetSummary = AssetSummary(assets)
+    val assetSummary = AssetSummary(assets, categories)
 
     private var created = 0
 
@@ -213,12 +232,16 @@ class DomainFixture {
         name: String = id,
         section: CategorySection = CategorySection.EXPENSE,
         archived: Boolean = false,
+        balancePolicy: AssetBalancePolicy = AssetBalancePolicy.DEFAULT,
+        allowsNegativeBalance: Boolean = false,
     ): Category {
         val category = Category(
             id = id,
             section = section,
             name = name,
             color = Category.defaultColor(created++),
+            balancePolicy = balancePolicy,
+            allowsNegativeBalance = allowsNegativeBalance,
             isArchived = archived,
             createdAtUtc = time.now,
             updatedAtUtc = time.now,
@@ -232,21 +255,21 @@ class DomainFixture {
         id: String,
         name: String = id,
         categoryId: String = "assets",
-        kind: AssetKind = AssetKind.DEPOSIT,
         currency: String = Money.DEFAULT_CURRENCY,
         openedPeriod: Period = Period(2026, 1),
         closedPeriod: Period? = null,
         annualRateBp: Int? = null,
+        termMonths: Int? = null,
     ): AssetAccount {
         val account = AssetAccount(
             id = id,
             categoryId = categoryId,
             name = name,
-            kind = kind,
             currency = currency,
             openedPeriod = openedPeriod,
             closedPeriod = closedPeriod,
             annualRateBp = annualRateBp,
+            termMonths = termMonths,
             createdAtUtc = time.now,
             updatedAtUtc = time.now,
         )

@@ -1,7 +1,6 @@
 package app.finance.feature.assets
 
 import app.finance.core.domain.DomainFixture
-import app.finance.core.model.AssetKind
 import app.finance.core.model.CategorySection
 import app.finance.core.model.Money
 import app.finance.core.model.Period
@@ -54,8 +53,8 @@ class AssetsControllerTest {
     /** Категория активов и два счёта в ней: вклад и кредитка. */
     private fun seedAccounts() {
         fx.category("banks", "Банки", section = CategorySection.ASSET)
-        fx.account("deposit", "Вклад", categoryId = "banks", kind = AssetKind.DEPOSIT, openedPeriod = jan)
-        fx.account("credit", "Кредитка", categoryId = "banks", kind = AssetKind.CREDIT, openedPeriod = jan)
+        fx.account("deposit", "Вклад", categoryId = "banks", openedPeriod = jan)
+        fx.account("credit", "Кредитка", categoryId = "banks", openedPeriod = jan)
     }
 
     private fun AssetsController.rows(): List<AccountRow> = state.value.groups.flatMap { it.accounts }
@@ -82,8 +81,7 @@ class AssetsControllerTest {
         assertEquals("Банки", group.categoryName)
         assertEquals(Money(425_000), group.total)
         assertEquals(listOf("deposit", "credit"), group.accounts.map { it.accountId }, "Сначала больший баланс")
-        assertEquals("Вклад", group.accounts.first().kindLabel)
-        assertEquals("Кредит", group.accounts.last().kindLabel)
+        assertEquals(listOf("Вклад", "Кредитка"), group.accounts.map { it.name })
         assertTrue(group.accounts.last().balance!!.isNegative())
     }
 
@@ -108,7 +106,7 @@ class AssetsControllerTest {
     @Test
     fun `ввод остатка создаёт снапшот и закрывает форму`() = runTest {
         fx.category("banks", "Банки", section = CategorySection.ASSET)
-        fx.account("deposit", "Вклад", categoryId = "banks", kind = AssetKind.DEPOSIT, openedPeriod = jan)
+        fx.account("deposit", "Вклад", categoryId = "banks", openedPeriod = jan)
 
         val controller = controller(feb)
         controller.start()
@@ -132,7 +130,7 @@ class AssetsControllerTest {
     @Test
     fun `повторный ввод за месяц заменяет остаток, а не добавляет второй`() = runTest {
         fx.category("banks", "Банки", section = CategorySection.ASSET)
-        fx.account("deposit", "Вклад", categoryId = "banks", kind = AssetKind.DEPOSIT, openedPeriod = jan)
+        fx.account("deposit", "Вклад", categoryId = "banks", openedPeriod = jan)
         fx.snapshot("deposit", feb, balanceMinor = 500_000)
 
         val controller = controller(feb)
@@ -159,7 +157,7 @@ class AssetsControllerTest {
     @Test
     fun `некорректный остаток показывает подсказку и не пишет данные`() = runTest {
         fx.category("banks", "Банки", section = CategorySection.ASSET)
-        fx.account("deposit", "Вклад", categoryId = "banks", kind = AssetKind.DEPOSIT, openedPeriod = jan)
+        fx.account("deposit", "Вклад", categoryId = "banks", openedPeriod = jan)
 
         val controller = controller(feb)
         controller.start()
@@ -179,7 +177,7 @@ class AssetsControllerTest {
     @Test
     fun `отрицательный остаток для вклада отклоняется сообщением домена`() = runTest {
         fx.category("banks", "Банки", section = CategorySection.ASSET)
-        fx.account("deposit", "Вклад", categoryId = "banks", kind = AssetKind.DEPOSIT, openedPeriod = jan)
+        fx.account("deposit", "Вклад", categoryId = "banks", openedPeriod = jan)
 
         val controller = controller(feb)
         controller.start()
@@ -194,8 +192,10 @@ class AssetsControllerTest {
         val error = requireNotNull(controller.state.value.error)
         assertTrue(error.contains("Отрицательный баланс"), "Сообщение: $error")
         assertNull(fx.assets.findSnapshot("deposit", feb))
-        // Кредиту отрицательный остаток разрешён.
-        fx.account("credit", "Кредитка", categoryId = "banks", kind = AssetKind.CREDIT, openedPeriod = jan)
+        // Право на минус задаёт категория (D-20, D-22): кредит — это счёт в категории
+        // с разрешённым отрицательным остатком, у самого счёта признака нет.
+        fx.category("credits", "Кредиты", section = CategorySection.ASSET, allowsNegativeBalance = true)
+        fx.account("credit", "Кредитка", categoryId = "credits", openedPeriod = jan)
         controller.start()
         advanceUntilIdle()
         controller.openSnapshotForm("credit")
@@ -218,14 +218,12 @@ class AssetsControllerTest {
         controller.openAccountDialog()
         assertEquals("banks", controller.state.value.accountDialog?.categoryId, "Категория подставляется")
         controller.setAccountName("  ИИС  ")
-        controller.setAccountKind(AssetKind.IIS)
         controller.submitAccount()
         advanceUntilIdle()
 
         val accounts = fx.assets.accounts(includeClosed = true)
         assertEquals(1, accounts.size)
         assertEquals("ИИС", accounts.single().name)
-        assertEquals(AssetKind.IIS, accounts.single().kind)
         assertEquals(feb, accounts.single().openedPeriod, "Счёт открывается текущим месяцем")
         assertEquals(listOf("ИИС"), controller.rows().map { it.name })
         assertNull(controller.state.value.accountDialog)
@@ -288,8 +286,8 @@ class AssetsControllerTest {
     @Test
     fun `остатки в другой валюте не смешиваются с Net Worth`() = runTest {
         fx.category("banks", "Банки", section = CategorySection.ASSET)
-        fx.account("deposit", "Вклад", categoryId = "banks", kind = AssetKind.DEPOSIT, openedPeriod = jan)
-        fx.account("usd", "Брокер USD", categoryId = "banks", kind = AssetKind.BROKERAGE, currency = "USD", openedPeriod = jan)
+        fx.account("deposit", "Вклад", categoryId = "banks", openedPeriod = jan)
+        fx.account("usd", "Брокер USD", categoryId = "banks", currency = "USD", openedPeriod = jan)
         fx.snapshot("deposit", feb, balanceMinor = 500_000)
         fx.snapshot("usd", feb, balanceMinor = 2_000, currency = "USD")
 

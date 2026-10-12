@@ -101,7 +101,7 @@ class LedgerControllerTest {
         assertEquals(Money(150_050), row.amount)
         assertEquals(100, row.sharePercent)
         assertTrue(row.hasComment)
-        assertEquals("#4E79A7", row.categoryColor, "Цвет категории берётся из её данных")
+        assertEquals(food.color, row.categoryColor, "Цвет категории берётся из её данных")
         assertEquals(Money(150_050), state.total)
         assertTrue(state.notice.orEmpty().contains("Добавлено"), "Сообщение: ${state.notice}")
     }

@@ -8,7 +8,7 @@ import app.finance.core.domain.RecordSnapshot
 import app.finance.core.domain.SnapshotInput
 import app.finance.core.domain.SnapshotResult
 import app.finance.core.model.AssetAccount
-import app.finance.core.model.AssetKind
+import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
 import app.finance.core.model.Category
 import app.finance.core.model.CategorySection
@@ -43,8 +43,8 @@ class AssetPersistenceTest {
 
     private val createAccount = CreateAccount(categories, assets, ids, time, transactions)
     private val closeAccount = CloseAccount(assets, time, transactions)
-    private val recordSnapshot = RecordSnapshot(assets, ids, time, transactions)
-    private val summary = AssetSummary(assets)
+    private val recordSnapshot = RecordSnapshot(assets, categories, ids, time, transactions)
+    private val summary = AssetSummary(assets, categories)
 
     private val jan = Period(2026, 1)
     private val feb = Period(2026, 2)
@@ -52,13 +52,21 @@ class AssetPersistenceTest {
     @AfterTest
     fun tearDown() = session.close()
 
-    private suspend fun seedAssetCategory(id: String = "banks") {
+    private suspend fun seedAssetCategory(
+        id: String = "banks",
+        name: String = "Банки",
+        allowsNegativeBalance: Boolean = false,
+    ) {
         categories.create(
             Category(
                 id = id,
                 section = CategorySection.ASSET,
-                name = "Банки",
+                name = name,
                 color = "#4E79A7",
+                // Категория вкладов: ставка известна, поэтому счёт может хранить
+                // годовую ставку (D-20).
+                balancePolicy = AssetBalancePolicy.FIXED_RATE,
+                allowsNegativeBalance = allowsNegativeBalance,
                 createdAtUtc = time.now,
                 updatedAtUtc = time.now,
             ),
@@ -67,7 +75,7 @@ class AssetPersistenceTest {
 
     private suspend fun newAccount(
         name: String = "Вклад",
-        kind: AssetKind = AssetKind.DEPOSIT,
+        categoryId: String = "banks",
         currency: String = Money.DEFAULT_CURRENCY,
         annualRateBp: Int? = null,
         note: String? = null,
@@ -76,9 +84,8 @@ class AssetPersistenceTest {
         if (categories.byId("banks") == null) seedAssetCategory()
         return createAccount(
             AccountInput(
-                categoryId = "banks",
+                categoryId = categoryId,
                 name = name,
-                kind = kind,
                 currency = currency,
                 openedPeriod = jan,
                 annualRateBp = annualRateBp,
@@ -91,7 +98,6 @@ class AssetPersistenceTest {
     fun `счёт сохраняется и читается обратно со всеми полями`() = runTest {
         val created = newAccount(
             name = "Вклад Т—Ж",
-            kind = AssetKind.DEPOSIT,
             annualRateBp = 850,
             note = "до 2027 года",
         )
@@ -100,7 +106,6 @@ class AssetPersistenceTest {
 
         assertEquals(created.id, stored?.id)
         assertEquals("Вклад Т—Ж", stored?.name)
-        assertEquals(AssetKind.DEPOSIT, stored?.kind, "kind хранится текстом и читается обратно")
         assertEquals(Money.DEFAULT_CURRENCY, stored?.currency)
         assertEquals(jan, stored?.openedPeriod)
         assertNull(stored?.closedPeriod)
@@ -114,7 +119,7 @@ class AssetPersistenceTest {
     @Test
     fun `валюта снапшота берётся из счёта`() = runTest {
         // В asset_snapshot нет колонки currency: валюта остатка равна валюте счёта.
-        val account = newAccount(name = "Брокер USD", kind = AssetKind.BROKERAGE, currency = "USD")
+        val account = newAccount(name = "Брокер USD", currency = "USD")
 
         recordSnapshot(SnapshotInput(accountId = account.id, period = feb, balance = Money(2_500, "USD")))
         val stored = assets.findSnapshot(account.id, feb)
@@ -183,7 +188,7 @@ class AssetPersistenceTest {
 
     @Test
     fun `закрытие счёта сохраняется и исключает счёт из активных`() = runTest {
-        val account = newAccount(name = "Наличные", kind = AssetKind.CASH)
+        val account = newAccount(name = "Наличные")
         recordSnapshot(SnapshotInput(account.id, feb, Money(30_000)))
 
         val closed = closeAccount(account.id, feb)
@@ -212,7 +217,10 @@ class AssetPersistenceTest {
     @Test
     fun `Net Worth на реальной базе учитывает отрицательный баланс кредита`() = runTest {
         val deposit = newAccount(name = "Вклад")
-        val credit = newAccount(name = "Кредитка", kind = AssetKind.CREDIT)
+        // Право на минус задаёт категория (D-20, D-22): кредитный счёт живёт в категории
+        // с разрешённым отрицательным остатком, у самого счёта признака больше нет.
+        seedAssetCategory(id = "credits", name = "Кредиты", allowsNegativeBalance = true)
+        val credit = newAccount(name = "Кредитка", categoryId = "credits")
 
         recordSnapshot(SnapshotInput(deposit.id, jan, Money(400_000)))
         recordSnapshot(SnapshotInput(credit.id, jan, Money(-50_000)))
@@ -231,7 +239,7 @@ class AssetPersistenceTest {
 
     @Test
     fun `снапшоты месяца возвращаются по убыванию баланса`() = runTest {
-        val small = newAccount(name = "Наличные", kind = AssetKind.CASH)
+        val small = newAccount(name = "Наличные")
         val big = newAccount(name = "Вклад")
 
         recordSnapshot(SnapshotInput(small.id, feb, Money(10_000)))

@@ -203,16 +203,22 @@ class AssetPersistenceTest {
 
     @Test
     fun `каждая мутация активов попадает в sync_outbox`() = runTest {
-        val before = db.syncQueries.countPending().executeAsOne()
         val account = newAccount()
+        // Категория счёта тоже попадает в outbox (D-29) — считаем только записи активов.
+        val before = assetPending()
 
         recordSnapshot(SnapshotInput(account.id, jan, Money(100_000)))
         recordSnapshot(SnapshotInput(account.id, feb, Money(120_000)))
         closeAccount(account.id, feb)
 
-        // Создание счёта + два снапшота (CREATE и UPDATE) + закрытие счёта.
-        assertEquals(before + 4, db.syncQueries.countPending().executeAsOne())
+        // Два снапшота и закрытие счёта.
+        assertEquals(before + 3, assetPending())
+        assertEquals(1L, before, "создание счёта")
     }
+
+    private fun assetPending(): Long = db.syncQueries.selectPending(100L).executeAsList()
+        .count { it.entity_type == SqlAssetRepository.ENTITY_ACCOUNT || it.entity_type == SqlAssetRepository.ENTITY_SNAPSHOT }
+        .toLong()
 
     @Test
     fun `Net Worth на реальной базе учитывает отрицательный баланс кредита`() = runTest {

@@ -4,7 +4,7 @@ import app.finance.core.charts.ChartPoint
 import app.finance.core.charts.ChartSeries
 import app.finance.core.charts.DonutSlice
 import app.finance.core.ui.ChartPalette
-import app.finance.core.ui.shortRu
+import app.finance.core.ui.chartLabelRu
 
 /**
  * Преобразование строк состояния экрана в данные графиков (F6.1).
@@ -14,8 +14,8 @@ import app.finance.core.ui.shortRu
  * Compose-типы. Пропуски сохраняются как `valueMinor == null`, поэтому линия в этом месте
  * рвётся, а не падает в ноль (D-15).
  *
- * Подписи оси X — `Period.shortRu()` («02.2026»): формат однозначен даже для диапазона
- * длиннее года, поэтому год в подпись добавлять не нужно.
+ * Подписи оси X — `Period.chartLabelRu()` («Фев 2026»): название месяца читается быстрее
+ * цифр, а год в подписи сохраняет однозначность для диапазона длиннее года.
  *
  * Цвета семантические, а не произвольные: доходы и взносы — зелёный, расходы — красный,
  * капитал и дельта — акцентный синий, прирост — жёлтый. Все взяты из палитры, безопасной
@@ -33,19 +33,19 @@ internal fun cashFlowSeries(rows: List<CashFlowRow>): List<ChartSeries> = listOf
         id = "income",
         title = "Доходы",
         colorHex = ChartPalette.SUCCESS_HEX,
-        points = rows.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.income.minor) },
+        points = rows.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.income.minor) },
     ),
     ChartSeries(
         id = "expense",
         title = "Расходы",
         colorHex = ChartPalette.ERROR_HEX,
-        points = rows.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.expense.minor) },
+        points = rows.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.expense.minor) },
     ),
     ChartSeries(
         id = "delta",
         title = "Дельта",
         colorHex = ChartPalette.PRIMARY_HEX,
-        points = rows.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.delta.minor) },
+        points = rows.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.delta.minor) },
     ),
 )
 
@@ -59,7 +59,7 @@ internal fun netWorthLine(rows: List<NetWorthRow>): ChartSeries = ChartSeries(
     id = "netWorth",
     title = "Капитал",
     colorHex = ChartPalette.PRIMARY_HEX,
-    points = rows.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.netWorth?.minor) },
+    points = rows.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.netWorth?.minor) },
 )
 
 /**
@@ -73,13 +73,13 @@ internal fun netWorthBars(rows: List<NetWorthRow>): List<ChartSeries> = listOf(
         id = "contributions",
         title = "Взносы",
         colorHex = ChartPalette.SUCCESS_HEX,
-        points = rows.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.contributions?.minor) },
+        points = rows.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.contributions?.minor) },
     ),
     ChartSeries(
         id = "gain",
         title = "Прирост",
         colorHex = ChartPalette.WARNING_HEX,
-        points = rows.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.gain?.minor) },
+        points = rows.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.gain?.minor) },
     ),
 )
 
@@ -98,6 +98,6 @@ internal fun categorySeries(rows: List<CategoryTrendRow>): List<ChartSeries> = r
         id = row.categoryId,
         title = row.name,
         colorHex = row.color,
-        points = row.points.map { ChartPoint(label = it.period.shortRu(), valueMinor = it.amount?.minor) },
+        points = row.points.map { ChartPoint(label = it.period.chartLabelRu(), valueMinor = it.amount?.minor) },
     )
 }

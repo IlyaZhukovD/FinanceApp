@@ -1,0 +1,12 @@
+-- Миграция 5 -> 6: синхронизация через Яндекс.Диск (docs/SYNC-YANDEX.md, DECISIONS D-29).
+--
+-- Новая таблица соответствия id; существующие таблицы не меняются. Определение совпадает
+-- с Sync.sq: verifyMigrations сравнивает мигрированную и свежую схему.
+CREATE TABLE sync_alias (
+    entity_type TEXT NOT NULL,
+    remote_id TEXT NOT NULL,
+    local_id TEXT NOT NULL,
+    PRIMARY KEY (entity_type, remote_id)
+);
+
+CREATE INDEX idx_sync_alias_local ON sync_alias(entity_type, local_id);

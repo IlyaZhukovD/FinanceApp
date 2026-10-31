@@ -31,6 +31,9 @@ FROM category_month_revision
 WHERE cell_id = ?
 ORDER BY created_at_utc, rowid;
 
+selectById:
+SELECT * FROM category_month_revision WHERE id = ?;
+
 selectByIdempotencyKey:
 SELECT * FROM category_month_revision WHERE idempotency_key = ? LIMIT 1;
 

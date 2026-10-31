@@ -72,6 +72,8 @@ class FormattingTest {
         assertEquals("Февраль 2026", Period(2026, 2).titleRu())
         assertEquals("Декабрь 2025", Period(2025, 12).titleRu())
         assertEquals("02.2026", Period(2026, 2).shortRu())
+        assertEquals("Фев 2026", Period(2026, 2).chartLabelRu())
+        assertEquals("Сен 2026", Period(2026, 9).chartLabelRu())
     }
 
     @Test
@@ -99,5 +101,13 @@ class FormattingTest {
         assertEquals(MutedColor, parseHexColor("oops"))
         assertEquals(MutedColor, parseHexColor("#FFF"))
         assertEquals(MutedColor, parseHexColor(""))
+    }
+
+    @Test
+    fun `маленькая доля показывается как меньше процента, а не ноль`() {
+        assertEquals("<1 %", shareLabelRu(0, Money(55_000)))
+        assertEquals("0 %", shareLabelRu(0, Money(0)))
+        assertEquals("38 %", shareLabelRu(38, Money(3_240_000)))
+        assertEquals("—", shareLabelRu(null, Money(100)))
     }
 }

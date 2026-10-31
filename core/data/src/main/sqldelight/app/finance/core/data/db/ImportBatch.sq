@@ -1,0 +1,65 @@
+-- Пакеты импорта (docs/IMPORT-NOTION.md §5.1, DECISIONS D-27).
+--
+-- Пакет — один запуск мастера импорта. Нужен, чтобы отменить импорт целиком и чтобы
+-- повторный импорт того же экспорта не удваивал суммы. Физически пакеты не удаляются:
+-- отмена переводит статус в UNDONE, история остаётся.
+CREATE TABLE import_batch (
+    id TEXT NOT NULL PRIMARY KEY,
+    source TEXT NOT NULL,
+    -- По строке на файл: sha256 <TAB> раздел <TAB> имя файла.
+    files TEXT NOT NULL,
+    rows_total INTEGER NOT NULL,
+    rows_imported INTEGER NOT NULL,
+    cells_touched INTEGER NOT NULL,
+    -- id категорий, созданных пакетом, через запятую.
+    created_category_ids TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    created_at_utc INTEGER NOT NULL,
+    updated_at_utc INTEGER NOT NULL,
+    row_version INTEGER NOT NULL DEFAULT 1,
+    deleted_at_utc INTEGER
+);
+
+-- Строка источника и ревизия ячейки, в которую она вошла. Ключ строки не уникален:
+-- после отмены пакета те же строки можно импортировать снова новым пакетом.
+CREATE TABLE import_row (
+    id TEXT NOT NULL PRIMARY KEY,
+    row_key TEXT NOT NULL,
+    batch_id TEXT NOT NULL REFERENCES import_batch(id),
+    revision_id TEXT NOT NULL REFERENCES category_month_revision(id),
+    created_at_utc INTEGER NOT NULL
+);
+
+CREATE INDEX idx_import_row_key ON import_row(row_key);
+
+CREATE INDEX idx_import_row_batch ON import_row(batch_id);
+
+insertBatch:
+INSERT INTO import_batch (
+    id, source, files, rows_total, rows_imported, cells_touched, created_category_ids,
+    status, created_at_utc, updated_at_utc, row_version, deleted_at_utc
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateStatus:
+UPDATE import_batch
+SET status = ?, updated_at_utc = ?, row_version = row_version + 1
+WHERE id = ?;
+
+selectBatchById:
+SELECT * FROM import_batch WHERE id = ?;
+
+selectBatches:
+SELECT * FROM import_batch WHERE deleted_at_utc IS NULL ORDER BY created_at_utc DESC, rowid DESC;
+
+insertRow:
+INSERT INTO import_row (id, row_key, batch_id, revision_id, created_at_utc)
+VALUES (?, ?, ?, ?, ?);
+
+selectAppliedKeys:
+SELECT r.row_key
+FROM import_row r
+JOIN import_batch b ON b.id = r.batch_id
+WHERE b.status = 'APPLIED' AND b.deleted_at_utc IS NULL AND r.row_key IN ?;
+
+selectRevisionIdsOfBatch:
+SELECT DISTINCT revision_id FROM import_row WHERE batch_id = ?;

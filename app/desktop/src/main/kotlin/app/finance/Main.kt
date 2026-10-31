@@ -1,6 +1,8 @@
 package app.finance
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +23,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyShortcut
+import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -40,14 +46,20 @@ import app.finance.feature.assets.AssetsSection
 import app.finance.feature.expenses.ExpensesScreen
 import app.finance.feature.expenses.ExpensesSection
 import app.finance.feature.income.IncomeScreen
+import app.finance.feature.importing.ImportWizardDialog
 import app.finance.feature.income.IncomeSection
+import app.finance.feature.settings.BackupCard
 import app.finance.feature.settings.SettingsController
+import app.finance.feature.sync.SyncSettingsCard
+import app.finance.feature.sync.syncStatusLine
 import app.finance.feature.settings.SettingsScreen
 import java.nio.file.Paths
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -70,16 +82,19 @@ fun main() = application {
     var settings by remember { mutableStateOf<AppSettings?>(null) }
     var startupError by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableStateOf(0) }
+    var closing by remember { mutableStateOf(false) }
+    val host = remember {
+        GraphHost(scope) { opened ->
+            // Восстановление из бэкапа: прежний граф уже закрыт хостом.
+            graph = opened
+        }
+    }
 
     LaunchedEffect(attempt) {
         runCatching {
             val settingsStore = SettingsStore.default()
             val loaded = withContext(Dispatchers.IO) { settingsStore.load() }
-            val opened = AppGraph.create(
-                scope = scope,
-                ioDispatcher = Dispatchers.IO,
-                databasePath = Paths.get(loaded.active.path),
-            )
+            val opened = host.create(Paths.get(loaded.active.path))
             Startup(settingsStore, loaded, opened)
         }
             .onSuccess { started ->
@@ -98,10 +113,51 @@ fun main() = application {
     }
 
     Window(
-        onCloseRequest = ::exitApplication,
+        // Перед закрытием — синхронизация и бэкап (SPEC.md F7.3, docs/SYNC-YANDEX.md §5).
+        // Оба шага ограничены по времени и не мешают закрыться без сети.
+        onCloseRequest = {
+            val current = graph
+            if (current == null) {
+                exitApplication()
+            } else if (!closing) {
+                closing = true
+                scope.launch {
+                    runCatching { current.sync.syncBeforeExit() }
+                    runCatching { current.backups.backupBeforeExit() }
+                    exitApplication()
+                }
+            }
+        },
         state = windowState,
-        title = "Finance",
+        // Запуск из исходников подписан: у него своя база (D-28), и окна легко перепутать.
+        title = if (AppDataLocations.isPackaged) "Finance" else "Finance — разработка",
     ) {
+        // Системное меню (SPEC.md §10). Пока в нём только импорт: остальные пункты появятся
+        // вместе с бэкапом и экспортом (M6, M7).
+        // Меню объявляется сразу, до открытия базы: полоса меню, добавленная в уже
+        // показанное окно, не появляется в Windows до перерисовки (найдено ручной проверкой).
+        val openedGraph = graph
+        MenuBar {
+            Menu("Файл") {
+                Item(
+                    "Синхронизировать",
+                    enabled = openedGraph != null,
+                    shortcut = if (isMac) KeyShortcut(Key.S, meta = true) else KeyShortcut(Key.S, ctrl = true),
+                    onClick = { openedGraph?.sync?.syncNow() },
+                )
+                Item(
+                    "Сделать бэкап",
+                    enabled = openedGraph != null,
+                    onClick = { openedGraph?.backups?.backupNow() },
+                )
+                Separator()
+                Item(
+                    "Импорт из Notion…",
+                    enabled = openedGraph != null,
+                    onClick = { openedGraph?.importer?.open() },
+                )
+            }
+        }
         FinanceTheme {
             // Освобождаем базу и отменяем фоновые задачи при закрытии окна.
             DisposableEffect(Unit) {
@@ -125,6 +181,8 @@ fun main() = application {
                     },
                 )
 
+                closing -> StartupProgressView(text = "Синхронизируем и сохраняем копию…")
+
                 currentGraph == null || currentStore == null || currentSettings == null -> StartupProgressView()
 
                 else -> {
@@ -137,7 +195,7 @@ fun main() = application {
                             scope = scope,
                             ioDispatcher = Dispatchers.IO,
                             switchDatabase = { path ->
-                                openDatabase(path = path, scope = scope) { opened ->
+                                openDatabase(path = path, host = host) { opened ->
                                     // Прежний граф закрываем только после успешного открытия
                                     // нового: при ошибке приложение остаётся на текущей базе.
                                     val previous = graph
@@ -159,6 +217,21 @@ fun main() = application {
 @Composable
 private fun AppShell(graph: AppGraph, settingsController: SettingsController) {
     var selectedId by remember { mutableStateOf(ExpensesSection.NAVIGATION_ID) }
+    val syncState by graph.sync.state.collectAsState()
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    // Синхронизация при запуске и каждые 10 минут, бэкап по таймеру (F7.3). Новый граф
+    // (другая база, восстановление) запускает свои задачи; прежний остановлен при закрытии.
+    LaunchedEffect(graph) {
+        graph.sync.start()
+        graph.backups.start()
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(STATUS_TICK_MS)
+            now = System.currentTimeMillis()
+        }
+    }
 
     Row(modifier = Modifier.fillMaxSize()) {
         AppSidebar(
@@ -166,10 +239,14 @@ private fun AppShell(graph: AppGraph, settingsController: SettingsController) {
             items = navigationItems(selectedId = selectedId),
             onSelect = { id -> selectedId = id },
             footer = {
-                // Статус честный: бэкапа в v1 нет, данные живут только на этом компьютере.
-                // С появлением копий на Яндекс.Диске (M6) тот же компонент покажет время
-                // последней выгрузки и сменит тон на жёлтый или красный.
-                SyncStatusFooter(text = "Данные хранятся локально на этом компьютере")
+                // Статус синхронизации (F7.9): клик ведёт в настройки, где карточка объясняет,
+                // что случилось и что делать.
+                val (text, tone) = syncStatusLine(syncState, now)
+                SyncStatusFooter(
+                    text = text,
+                    tone = tone,
+                    modifier = Modifier.clickable { selectedId = SETTINGS_ID },
+                )
             },
         )
 
@@ -205,10 +282,18 @@ private fun AppShell(graph: AppGraph, settingsController: SettingsController) {
             SETTINGS_ID -> SettingsScreen(
                 controller = settingsController,
                 modifier = Modifier.fillMaxSize(),
+                extraCards = {
+                    val cardModifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+                    SyncSettingsCard(controller = graph.sync, modifier = cardModifier)
+                    BackupCard(controller = graph.backups, modifier = cardModifier)
+                },
             )
             else -> SectionNotReady(title = "Раздел", milestone = "—", modifier = Modifier.fillMaxSize())
         }
     }
+
+    // Мастер импорта открывается из меню «Файл» и рисуется поверх любого раздела.
+    ImportWizardDialog(controller = graph.importer)
 }
 
 private fun navigationItems(selectedId: String): List<SidebarItem> = listOf(
@@ -229,16 +314,10 @@ private fun navigationItems(selectedId: String): List<SidebarItem> = listOf(
  */
 private suspend fun openDatabase(
     path: String,
-    scope: CoroutineScope,
+    host: GraphHost,
     onOpened: (AppGraph) -> Unit,
 ): Boolean {
-    val opened = runCatching {
-        AppGraph.create(
-            scope = scope,
-            ioDispatcher = Dispatchers.IO,
-            databasePath = Paths.get(path),
-        )
-    }.getOrElse { error ->
+    val opened = runCatching { host.create(Paths.get(path)) }.getOrElse { error ->
         System.err.println("Finance: не удалось открыть базу $path — ${describe(error)}")
         error.printStackTrace()
         return false
@@ -249,7 +328,7 @@ private suspend fun openDatabase(
 }
 
 @Composable
-private fun StartupProgressView() {
+private fun StartupProgressView(text: String = "Открываем базу…") {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -258,7 +337,7 @@ private fun StartupProgressView() {
         ) {
             CircularProgressIndicator()
             Text(
-                text = "Открываем базу…",
+                text = text,
                 modifier = Modifier.padding(top = 16.dp),
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -309,3 +388,7 @@ private data class Startup(
  * Заглушка [app.finance.core.ui.SectionNotReady] осталась для ветки `else` — неизвестный id.
  */
 private const val SETTINGS_ID = "settings"
+
+private const val STATUS_TICK_MS = 30_000L
+
+private val isMac: Boolean = System.getProperty("os.name").orEmpty().lowercase().contains("mac")

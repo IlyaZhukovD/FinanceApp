@@ -8,6 +8,8 @@ sqldelight = "2.3.2"
 coroutines = "1.11.0"
 # Ветка JUnit 5, а не 6: её kotlin-test выбирает автоматически, меньше риск на первой сборке.
 junit = "5.14.4"
+# JSON пакетов синхронизации и ответов API Яндекс.Диска (D-29): только JsonElement, без плагина.
+serialization = "1.10.0"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -17,6 +19,7 @@ coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", ve
 # Dispatchers.Main на десктопе — это Swing EDT и живёт в отдельном артефакте.
 coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions-jvm", version.ref = "sqldelight" }
 
 [plugins]

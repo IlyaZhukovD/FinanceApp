@@ -364,12 +364,13 @@ fun LabeledControl(
  * кнопка растягивается на ширину компонента, поэтому в `Row` без явной ширины или `weight`
  * список заберёт всю строку — та же ловушка, что у [LabeledControl].
  *
+ * @param label подпись сверху; `null` — без подписи и без резерва места (ячейка таблицы).
  * @param current подпись выбранного значения.
  * @param options пары `идентификатор -> подпись`; [onPick] получает идентификатор.
  */
 @Composable
 fun FinancePicker(
-    label: String,
+    label: String?,
     current: String,
     options: List<Pair<String, String>>,
     onPick: (String) -> Unit,
@@ -378,7 +379,7 @@ fun FinancePicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    LabeledControl(modifier = modifier, label = label) {
+    val picker: @Composable () -> Unit = {
         Box {
             SecondaryButton(
                 text = current,
@@ -398,6 +399,14 @@ fun FinancePicker(
                 }
             }
         }
+    }
+
+    // Без подписи (ячейка таблицы) место под неё не резервируется: иначе список съезжает
+    // вниз относительно соседних полей строки, у которых подписи тоже нет.
+    if (label == null) {
+        Box(modifier = modifier) { picker() }
+    } else {
+        LabeledControl(modifier = modifier, label = label) { picker() }
     }
 }
 

@@ -13,14 +13,34 @@ import java.util.Properties
  * Windows — `%APPDATA%\app.finance`,
  * прочее — `~/.local/share/app.finance`.
  *
+ * У собранного приложения и у запуска из исходников разные каталоги (D-28): установленный
+ * Finance работает с `app.finance`, а `gradlew run` и запуск из IDE — с `app.finance-dev`.
+ * Разработка не трогает настоящие данные, даже если забыть переключить базу.
+ *
  * Живёт в слое данных, а не в `app:desktop`: путь к каталогу нужен и настройкам, и графу
  * зависимостей, а дублировать определение платформы в двух модулях — источник расхождения.
  */
 object AppDataLocations {
 
     private const val APP_DIRECTORY = "app.finance"
+    private const val DEV_DIRECTORY = "app.finance-dev"
+
+    /** Явный каталог данных: `-Dfinance.dataDir=...` важнее любых правил ниже. */
+    const val DATA_DIR_PROPERTY = "finance.dataDir"
+
+    /**
+     * Запуск из собранного приложения. Свойство `jpackage.app-path` выставляет лаунчер
+     * jpackage (`Finance.exe`, `Finance.app`); при `gradlew run` и запуске из IDE его нет.
+     */
+    val isPackaged: Boolean
+        get() = !System.getProperty("jpackage.app-path").isNullOrBlank()
 
     fun directory(): Path {
+        System.getProperty(DATA_DIR_PROPERTY)?.takeIf { it.isNotBlank() }?.let { return Paths.get(it) }
+        return platformBase().resolve(if (isPackaged) APP_DIRECTORY else DEV_DIRECTORY)
+    }
+
+    private fun platformBase(): Path {
         val osName = System.getProperty("os.name").orEmpty().lowercase()
         val home = Paths.get(System.getProperty("user.home"))
         val base = when {
@@ -32,7 +52,7 @@ object AppDataLocations {
 
             else -> home.resolve(".local").resolve("share")
         }
-        return base.resolve(APP_DIRECTORY)
+        return base
     }
 
     /** Основная база данных: создаётся при первом запуске. */

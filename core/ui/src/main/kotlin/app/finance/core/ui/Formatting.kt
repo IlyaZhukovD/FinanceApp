@@ -25,6 +25,11 @@ private const val DECIMAL_SEPARATOR = ','
 
 private val HUNDRED = BigDecimal.valueOf(100)
 
+private val MONTHS_SHORT_RU = listOf(
+    "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+    "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+)
+
 private val MONTHS_RU = listOf(
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
@@ -79,6 +84,18 @@ fun sharePercent(part: Money, total: Money): Int? {
 }
 
 /**
+ * Подпись доли для таблицы: «38 %», «<1 %» или «—».
+ *
+ * Ненулевая сумма с долей, округлённой до нуля, показывается как «<1 %»: «0 %» читается
+ * как «трат не было», а они были (найдено на реальных данных: «связь» 550 ₽ из 130 тыс.).
+ */
+fun shareLabelRu(percent: Int?, part: Money): String = when {
+    percent == null -> "—"
+    percent == 0 && part.isPositive() -> "<1 %"
+    else -> "$percent %"
+}
+
+/**
  * Изменение к прошлому периоду в процентах. Null, если прошлый период пустой
  * (делить не на что) или валюты не совпадают — на экране это показывается как «—».
  */
@@ -90,6 +107,9 @@ fun deltaPercent(current: Money, previous: Money): Int? {
 
 /** Заголовок периода: «Февраль 2026». */
 fun Period.titleRu(): String = "${MONTHS_RU[month - 1]} $year"
+
+/** Короткая подпись месяца для осей графиков: «Сен 2026». Цифры «09.2026» читались хуже. */
+fun Period.chartLabelRu(): String = "${MONTHS_SHORT_RU[month - 1]} $year"
 
 /** Короткая подпись периода для пикеров и отчётов: «02.2026». */
 fun Period.shortRu(): String = "%02d.%04d".format(month, year)

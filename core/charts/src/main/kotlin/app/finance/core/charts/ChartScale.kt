@@ -119,6 +119,27 @@ data class VerticalScale(
             of(series.flatMap { it.points.map { point -> point.valueMinor } }, tickCount, includeZero)
 
         /**
+         * Шкала для столбцов с накоплением: границы — по высоте всего столбца, а не по
+         * отдельной серии. Положительные значения точки складываются вверх, отрицательные —
+         * вниз, поэтому учитываются обе суммы.
+         *
+         * Прежде шкала считалась по самой большой серии, и столбец из нескольких категорий
+         * упирался в потолок графика вместе с линией итога (найдено на реальных данных).
+         */
+        fun ofStacked(series: List<ChartSeries>, tickCount: Int = DEFAULT_TICK_COUNT): VerticalScale? {
+            val size = series.maxOfOrNull { it.points.size } ?: return null
+            val totals = (0 until size).flatMap { index ->
+                val values = series.mapNotNull { it.points.getOrNull(index)?.valueMinor }
+                if (values.isEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(values.filter { it > 0L }.sum(), values.filter { it < 0L }.sum())
+                }
+            }
+            return of(totals, tickCount, includeZero = true)
+        }
+
+        /**
          * Округляет шаг до «красивого» числа вида 1/2/5 × 10^k.
          *
          * Без этого подписи оси выглядят как 37 412 ₽ и не дают глазу зацепиться за масштаб.

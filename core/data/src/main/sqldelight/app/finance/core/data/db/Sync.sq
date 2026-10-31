@@ -22,6 +22,18 @@ CREATE TABLE sync_state (
     updated_at_utc INTEGER NOT NULL
 );
 
+-- Соответствие чужих id своим (docs/SYNC-YANDEX.md §5, D-29): одноимённые категории и
+-- ячейки одного ключа «категория + месяц», созданные на разных компьютерах, сливаются в одну
+-- запись, а id другого компьютера запоминается здесь.
+CREATE TABLE sync_alias (
+    entity_type TEXT NOT NULL,
+    remote_id TEXT NOT NULL,
+    local_id TEXT NOT NULL,
+    PRIMARY KEY (entity_type, remote_id)
+);
+
+CREATE INDEX idx_sync_alias_local ON sync_alias(entity_type, local_id);
+
 enqueue:
 INSERT INTO sync_outbox (
     change_id, entity_type, entity_id, operation, row_version,
@@ -43,3 +55,21 @@ SELECT value FROM sync_state WHERE key = ?;
 upsertState:
 INSERT OR REPLACE INTO sync_state (key, value, updated_at_utc)
 VALUES (?, ?, ?);
+
+selectPendingAll:
+SELECT * FROM sync_outbox WHERE status = 'pending' ORDER BY occurred_at_utc, rowid;
+
+markAllSynced:
+UPDATE sync_outbox SET status = 'synced', synced_at_utc = ? WHERE status = 'pending';
+
+aliasOf:
+SELECT local_id FROM sync_alias WHERE entity_type = ? AND remote_id = ?;
+
+aliasesTo:
+SELECT remote_id FROM sync_alias WHERE entity_type = ? AND local_id = ?;
+
+putAlias:
+INSERT OR REPLACE INTO sync_alias (entity_type, remote_id, local_id) VALUES (?, ?, ?);
+
+deleteState:
+DELETE FROM sync_state WHERE key = ?;

@@ -1,0 +1,84 @@
+-- Запросы движка синхронизации (docs/SYNC-YANDEX.md §5): выгрузка всей базы и применение
+-- изменений с других компьютеров. Применение пишет строки напрямую, мимо репозиториев:
+-- чужие изменения не должны снова попадать в sync_outbox и уходить обратно на Диск.
+
+allCategories:
+SELECT * FROM category ORDER BY section, sort_order, name;
+
+updateCategoryFull:
+UPDATE category
+SET section = ?, name = ?, parent_id = ?, color = ?, icon = ?, sort_order = ?,
+    is_archived = ?, created_at_utc = ?, updated_at_utc = ?, row_version = ?, deleted_at_utc = ?,
+    balance_policy = ?, allows_negative_balance = ?
+WHERE id = ?;
+
+categoryRowVersion:
+SELECT row_version FROM category WHERE id = ?;
+
+revisionsWithCell:
+SELECT r.*, c.section AS cell_section, c.category_id AS cell_category_id, c.period AS cell_period
+FROM category_month_revision r
+JOIN category_month c ON c.id = r.cell_id
+ORDER BY r.created_at_utc, r.rowid;
+
+revisionWithCellById:
+SELECT r.*, c.section AS cell_section, c.category_id AS cell_category_id, c.period AS cell_period
+FROM category_month_revision r
+JOIN category_month c ON c.id = r.cell_id
+WHERE r.id = ?;
+
+revisionExists:
+SELECT COUNT(*) FROM category_month_revision WHERE id = ?;
+
+-- Ячейка ключа «категория + месяц»: живая важнее удалённой, затем самая свежая.
+cellByKeyAny:
+SELECT *
+FROM category_month
+WHERE category_id = ? AND period = ?
+ORDER BY deleted_at_utc IS NULL DESC, updated_at_utc DESC
+LIMIT 1;
+
+allAccounts:
+SELECT * FROM asset_account ORDER BY created_at_utc, id;
+
+updateAccountFull:
+UPDATE asset_account
+SET category_id = ?, name = ?, currency = ?, opened_period = ?, closed_period = ?,
+    annual_rate_bp = ?, note = ?, created_at_utc = ?, updated_at_utc = ?, row_version = ?,
+    deleted_at_utc = ?, term_months = ?
+WHERE id = ?;
+
+allSnapshots:
+SELECT * FROM asset_snapshot ORDER BY period, created_at_utc, id;
+
+snapshotById:
+SELECT * FROM asset_snapshot WHERE id = ?;
+
+snapshotByKeyAny:
+SELECT *
+FROM asset_snapshot
+WHERE account_id = ? AND period = ?
+ORDER BY deleted_at_utc IS NULL DESC, updated_at_utc DESC
+LIMIT 1;
+
+updateSnapshotFull:
+UPDATE asset_snapshot
+SET account_id = ?, period = ?, balance_minor = ?, contribution_minor = ?, note = ?,
+    created_at_utc = ?, updated_at_utc = ?, row_version = ?, deleted_at_utc = ?
+WHERE id = ?;
+
+-- «Пустая» база для подключения второго компьютера: нет ни ячеек, ни счетов.
+dataCounts:
+SELECT
+    (SELECT COUNT(*) FROM category_month) AS cells,
+    (SELECT COUNT(*) FROM asset_account) AS accounts;
+
+-- Стартовые категории пустой базы перед первой загрузкой с Диска: у них нет ни ячеек, ни
+-- счетов, ни истории — их место займут категории с Диска (docs/SYNC-YANDEX.md §6).
+deleteUnusedCategories:
+DELETE FROM category
+WHERE id NOT IN (SELECT category_id FROM category_month)
+  AND id NOT IN (SELECT category_id FROM asset_account);
+
+clearOutbox:
+DELETE FROM sync_outbox WHERE status = 'pending';

@@ -119,4 +119,28 @@ class VerticalScaleTest {
             VerticalScale.of(listOf(1_000L), tickCount = 1)
         }
     }
+
+    @Test
+    fun `шкала столбцов с накоплением считается по высоте столбца, а не по серии`() {
+        fun series(id: String, vararg values: Long?) =
+            ChartSeries(id, id, "#332288", values.mapIndexed { i, v -> ChartPoint("0$i", v) })
+        val stacked = listOf(
+            series("food", 40_000_00L, 10_000_00L),
+            series("home", 45_000_00L, null),
+            series("refund", -5_000_00L, null),
+        )
+
+        val scale = assertNotNullScale(VerticalScale.ofStacked(stacked))
+        // Столбец января — 85 000 ₽ вверх и 5 000 ₽ вниз: оба края внутри шкалы.
+        assertTrue(scale.maxValueMinor >= 85_000_00L, "верх шкалы ${scale.maxValueMinor}")
+        assertTrue(scale.minValueMinor <= -5_000_00L, "низ шкалы ${scale.minValueMinor}")
+        // По отдельной серии шкала была бы ниже столбца — это и обрезало график.
+        assertTrue(assertNotNullScale(VerticalScale.of(stacked)).maxValueMinor < 85_000_00L)
+        assertNull(VerticalScale.ofStacked(emptyList()))
+    }
+
+    private fun assertNotNullScale(scale: VerticalScale?): VerticalScale {
+        kotlin.test.assertNotNull(scale)
+        return scale
+    }
 }

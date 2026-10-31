@@ -3,6 +3,9 @@ package app.finance.feature.settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,13 +54,18 @@ import java.io.File
  * из новой базы. При неудаче прежнее подключение сохраняется (см. [SettingsController]).
  */
 @Composable
-fun SettingsScreen(controller: SettingsController, modifier: Modifier = Modifier) {
+fun SettingsScreen(
+    controller: SettingsController,
+    modifier: Modifier = Modifier,
+    /** Карточки других модулей (синхронизация, бэкапы): хост подставляет их снизу. */
+    extraCards: @Composable ColumnScope.() -> Unit = {},
+) {
     val state by controller.state.collectAsState()
 
     LaunchedEffect(controller) { controller.start() }
 
     Column(
-        modifier = modifier.fillMaxSize().padding(vertical = FinanceSpace.Md),
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = FinanceSpace.Md),
         verticalArrangement = Arrangement.spacedBy(FinanceSpace.Md),
     ) {
         state.error?.let { message ->
@@ -139,6 +147,8 @@ fun SettingsScreen(controller: SettingsController, modifier: Modifier = Modifier
                 FileRow(label = "Активная база", value = state.activeProfile?.path ?: "—")
             }
         }
+
+        extraCards()
     }
 
     state.editor?.let { editor -> ProfileEditorDialog(editor = editor, controller = controller) }

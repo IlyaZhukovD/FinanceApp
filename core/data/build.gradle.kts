@@ -7,13 +7,13 @@ plugins {
 
 kotlin {
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+        jvmTarget.set(JvmTarget.JVM_19)
     }
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_19
+    targetCompatibility = JavaVersion.VERSION_19
 }
 
 sqldelight {
@@ -55,9 +55,13 @@ sqldelight {
 dependencies {
     api(project(":core:model"))
     implementation(project(":core:domain"))
+    // SqlSyncStore реализует SyncStore движка синхронизации (D-29).
+    implementation(project(":core:sync"))
 
     implementation(libs.sqldelight.sqlite.driver)
     implementation(libs.coroutines.core)
+    // Манифест и журнал локальных бэкапов (D-30).
+    implementation(libs.serialization.json)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.junit.jupiter)

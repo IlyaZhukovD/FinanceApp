@@ -1,5 +1,9 @@
 package app.finance.feature.analytics
 
+import app.finance.core.ui.QuietButton
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +33,7 @@ import app.finance.core.charts.GroupedBarChart
 import app.finance.core.charts.StackedBarChart
 import app.finance.core.charts.limitSlices
 import app.finance.core.model.Money
+import app.finance.core.ui.shareLabelRu
 import app.finance.core.ui.CategoryChip
 import app.finance.core.ui.EmptyStateCard
 import app.finance.core.ui.FinanceCard
@@ -46,7 +51,7 @@ import app.finance.core.ui.TextCell
 import app.finance.core.ui.deltaColor
 import app.finance.core.ui.formatRu
 import app.finance.core.ui.formatSignedRu
-import app.finance.core.ui.shortRu
+import app.finance.core.ui.titleRu
 
 /**
  * Экран «Аналитика» (SPEC.md F6) — дашборд из карточек.
@@ -96,7 +101,7 @@ private fun Header(state: AnalyticsUiState, controller: AnalyticsController) {
     Column(verticalArrangement = Arrangement.spacedBy(FinanceSpace.Sm)) {
         SectionHeader(
             title = "Аналитика",
-            subtitle = "Период ${range.from.shortRu()} — ${range.to.shortRu()} · ${range.length} мес.",
+            subtitle = "Период ${range.from.titleRu()} — ${range.to.titleRu()} · ${range.length} мес.",
             actions = {
                 // Расходы: рост — плохая новость, поэтому favorableWhenPositive = false.
                 ChangeText(label = "MoM", change = state.expenseMom, favorableWhenPositive = false)
@@ -246,16 +251,43 @@ private fun RowScope.StructureCard(
                 HeaderCell(text = "Доля", alignEnd = true)
                 HeaderCell(text = "Сумма", alignEnd = true)
             }
-            rows.forEachIndexed { index, row ->
-                TableRow(alternate = index % 2 == 1, showDivider = index != rows.lastIndex) {
+            // Список длинный (в расходах — десятки категорий): сначала первые 5, дальше по 5
+            // по кнопке, и свернуть обратно. Диаграмма выше показывает всю структуру сразу.
+            var visible by remember(title) { mutableStateOf(STRUCTURE_PAGE) }
+            val shown = rows.take(visible)
+            shown.forEachIndexed { index, row ->
+                TableRow(alternate = index % 2 == 1, showDivider = index != shown.lastIndex) {
                     TextCell(text = row.name, weight = NAME_WEIGHT)
                     if (showMean) MoneyCell(money = row.mean)
                     TextCell(
-                        text = percent(row.sharePercent),
+                        text = shareLabelRu(row.sharePercent, row.amount),
                         alignEnd = true,
                         color = FinancePalette.TextSecondary,
                     )
                     MoneyCell(money = row.amount, color = moneyColor(row.amount))
+                }
+            }
+            if (rows.size > STRUCTURE_PAGE) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(FinanceSpace.Sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Показано ${shown.size} из ${rows.size}",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinancePalette.TextSecondary,
+                    )
+                    if (visible > STRUCTURE_PAGE) {
+                        QuietButton(text = "Скрыть", onClick = { visible = STRUCTURE_PAGE })
+                    }
+                    if (shown.size < rows.size) {
+                        QuietButton(
+                            text = "Показать ещё ${minOf(STRUCTURE_PAGE, rows.size - shown.size)}",
+                            onClick = { visible += STRUCTURE_PAGE },
+                        )
+                    }
                 }
             }
         }
@@ -265,19 +297,38 @@ private fun RowScope.StructureCard(
 /** Динамика расходов по категориям: стек и линия итога поверх него (F6.1.1). */
 @Composable
 private fun ExpenseTrendCard(rows: List<CategoryTrendRow>, hasData: Boolean, currency: String) {
+    // Фильтр по одной категории (F6.1.2): нажатие в легенде оставляет только её, повторное
+    // нажатие или «Все категории» возвращает общий вид. Выбор живёт в экране, а не в
+    // контроллере: это вид графика, а не данные.
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    val all = categorySeries(rows)
+    val selected = all.firstOrNull { it.id == selectedId }
+    if (selectedId != null && selected == null) selectedId = null
+
     FinanceCard(
-        title = "Расходы по месяцам",
-        subtitle = "Столбцы — категории, линия поверх — итог месяца",
+        title = if (selected == null) "Расходы по месяцам" else "Расходы по месяцам: ${selected.title}",
+        subtitle = if (selected == null) {
+            "Столбцы — категории, линия поверх — итог месяца. Нажмите на категорию в легенде, чтобы увидеть только её"
+        } else {
+            "Динамика одной категории. Нажмите на неё ещё раз или на «Все категории»"
+        },
+        actions = if (selected == null) null else {
+            { QuietButton(text = "Все категории", onClick = { selectedId = null }) }
+        },
     ) {
         if (!hasData) {
             EmptyStateCard(title = "Нет данных", hint = "За период нет ни одной ячейки расходов")
         } else {
             StackedBarChart(
-                series = categorySeries(rows),
+                series = if (selected == null) all else listOf(selected),
                 modifier = Modifier.fillMaxWidth(),
                 currency = currency,
                 height = CHART_HEIGHT,
-                showTotalLine = true,
+                // У одной категории линия итога совпала бы с верхом столбцов.
+                showTotalLine = selected == null,
+                legendItems = all,
+                selectedSeriesId = selected?.id,
+                onLegendClick = { id -> selectedId = if (selectedId == id) null else id },
             )
         }
     }
@@ -307,7 +358,7 @@ private fun RowScope.CashFlowCard(rows: List<CashFlowRow>, hasData: Boolean, cur
             }
             rows.forEachIndexed { index, row ->
                 TableRow(alternate = index % 2 == 1, showDivider = index != rows.lastIndex) {
-                    TextCell(text = row.period.shortRu())
+                    TextCell(text = row.period.titleRu())
                     MoneyCell(money = row.income)
                     MoneyCell(money = row.expense)
                     MoneyCell(
@@ -357,7 +408,7 @@ private fun RowScope.NetWorthCard(rows: List<NetWorthRow>, hasData: Boolean, cur
             }
             rows.forEachIndexed { index, row ->
                 TableRow(alternate = index % 2 == 1, showDivider = index != rows.lastIndex) {
-                    TextCell(text = row.period.shortRu())
+                    TextCell(text = row.period.titleRu())
                     MoneyCell(money = row.netWorth, color = row.netWorth?.let { moneyColor(it) } ?: FinancePalette.TextDisabled)
                     MoneyCell(money = row.contributions, signed = true)
                     MoneyCell(money = row.gain, signed = true, color = row.gain?.let { moneyColor(it) } ?: FinancePalette.TextDisabled)
@@ -403,6 +454,9 @@ private fun moneyColor(money: Money): Color =
 
 /** Процент в тексте уже несёт знак числа, поэтому отдельный «+» добавляется только росту. */
 private fun Int.signumLabel(): String = if (this > 0) "+" else ""
+
+/** Сколько строк таблицы структуры показывается сразу и добавляется кнопкой «Показать ещё». */
+private const val STRUCTURE_PAGE = 5
 
 private fun percent(value: Int?): String = value?.let { "$it %" } ?: "—"
 

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import app.finance.core.domain.ConflictPolicy
 import app.finance.core.model.LedgerSection
 import app.finance.core.model.Money
+import app.finance.core.ui.shareLabelRu
 import app.finance.core.ui.CategoryDot
 import app.finance.core.ui.CheckboxRow
 import app.finance.core.ui.ConfirmDialog
@@ -372,7 +373,7 @@ private fun LedgerRowView(
         }
 
         TextCell(
-            text = row.sharePercent?.let { "$it %" } ?: "—",
+            text = shareLabelRu(row.sharePercent, row.amount),
             weight = W_SHARE,
             alignEnd = true,
             color = FinancePalette.TextSecondary,

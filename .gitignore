@@ -32,3 +32,6 @@ settings.local.json
 
 # macOS
 .DS_Store
+
+_to_delete/
+.kotlin/

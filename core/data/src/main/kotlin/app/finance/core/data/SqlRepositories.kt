@@ -19,9 +19,11 @@ import app.finance.core.model.Period
  */
 class SqlCategoryRepository(
     private val database: FinanceDatabase,
+    private val ids: IdGenerator = RandomUuidGenerator(),
 ) : CategoryRepository {
 
     private val queries get() = database.categoryQueries
+    private val outbox get() = database.syncQueries
 
     override suspend fun byId(id: String): Category? =
         queries.selectById(id).executeAsOneOrNull()?.toDomain()
@@ -52,6 +54,7 @@ class SqlCategoryRepository(
             row_version = category.rowVersion.toLong(),
             deleted_at_utc = category.deletedAtUtc,
         )
+        enqueue(category.id, SqlLedgerRepository.OPERATION_CREATE, category.updatedAtUtc)
     }
 
     override suspend fun update(category: Category) {
@@ -65,6 +68,7 @@ class SqlCategoryRepository(
             updated_at_utc = category.updatedAtUtc,
             id = category.id,
         )
+        enqueue(category.id, SqlLedgerRepository.OPERATION_UPDATE, category.updatedAtUtc)
     }
 
     override suspend fun setArchived(categoryId: String, archived: Boolean, updatedAtUtc: Long) {
@@ -73,6 +77,29 @@ class SqlCategoryRepository(
         } else {
             queries.unarchive(updated_at_utc = updatedAtUtc, id = categoryId)
         }
+        enqueue(categoryId, SqlLedgerRepository.OPERATION_UPDATE, updatedAtUtc)
+    }
+
+    /**
+     * Запись в sync_outbox в той же транзакции, что и изменение (SPEC.md §7, D-29).
+     * Версия строки читается из базы: UPDATE увеличивает её в SQL, а уникальность outbox
+     * держится на тройке (тип, id, версия).
+     */
+    private fun enqueue(categoryId: String, operation: String, occurredAtUtc: Long) {
+        val version = database.syncApplyQueries.categoryRowVersion(categoryId).executeAsOneOrNull() ?: return
+        outbox.enqueue(
+            change_id = ids.newId(),
+            entity_type = ENTITY_TYPE,
+            entity_id = categoryId,
+            operation = operation,
+            row_version = version,
+            occurred_at_utc = occurredAtUtc,
+            payload_hash = null,
+        )
+    }
+
+    companion object {
+        const val ENTITY_TYPE = "category"
     }
 
     /** Число категорий в базе — для диагностики и теста идемпотентности сида. */
@@ -165,10 +192,24 @@ class SqlLedgerRepository(
             idempotency_key = revision.idempotencyKey,
             created_at_utc = revision.createdAtUtc,
         )
+        // Ревизии неизменяемы, поэтому версия всегда 1. Ячейки на Диск не выгружаются:
+        // на другом компьютере их значение восстанавливается повтором ревизий (D-29).
+        outbox.enqueue(
+            change_id = ids.newId(),
+            entity_type = REVISION_ENTITY_TYPE,
+            entity_id = revision.id,
+            operation = OPERATION_CREATE,
+            row_version = 1,
+            occurred_at_utc = revision.createdAtUtc,
+            payload_hash = null,
+        )
     }
 
     override suspend fun revisionByIdempotencyKey(key: String): CategoryMonthRevision? =
         revisions.selectByIdempotencyKey(key).executeAsOneOrNull()?.toDomain()
+
+    override suspend fun revisionById(id: String): CategoryMonthRevision? =
+        revisions.selectById(id).executeAsOneOrNull()?.toDomain()
 
     /** Число ячеек без фильтрации tombstone — нужно, чтобы тест видел «мёртвые» строки. */
     fun countCells(): Long = cells.countAll().executeAsOne()
@@ -189,6 +230,7 @@ class SqlLedgerRepository(
 
     companion object {
         const val ENTITY_TYPE = "category_month"
+        const val REVISION_ENTITY_TYPE = "category_month_revision"
         const val OPERATION_CREATE = "CREATE"
         const val OPERATION_UPDATE = "UPDATE"
         const val OPERATION_DELETE = "DELETE"

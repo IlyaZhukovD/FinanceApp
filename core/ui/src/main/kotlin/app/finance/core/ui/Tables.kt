@@ -127,8 +127,14 @@ fun SectionHeader(
  * должен спорить с числами. Цвет подписей приглушённый, стиль единый для всех разделов.
  */
 @Composable
-fun TableHeaderRow(modifier: Modifier = Modifier, cells: @Composable RowScope.() -> Unit) {
-    Column(modifier = modifier.fillMaxWidth()) {
+fun TableHeaderRow(
+    modifier: Modifier = Modifier,
+    background: Color = FinancePalette.Surface,
+    cells: @Composable RowScope.() -> Unit,
+) {
+    // Непрозрачный фон обязателен: шапка бывает закреплённой (stickyHeader), и без фона
+    // прокручиваемые строки просвечивают сквозь неё. По умолчанию — цвет карточки.
+    Column(modifier = modifier.fillMaxWidth().background(background)) {
         Row(
             modifier = Modifier.fillMaxWidth().height(FinanceSize.ControlHeight),
             verticalAlignment = Alignment.CenterVertically,

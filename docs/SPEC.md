@@ -53,7 +53,7 @@ PIN-лок.
 | Язык | Kotlin (JVM) | 2.4.20 |
 | UI | Compose Multiplatform for Desktop, Material 3 `lightColorScheme` | 1.12.0 |
 | Локальная БД | SQLite через SQLDelight (WAL, `foreign_keys=ON`) | 2.3.2 |
-| JVM target | 21 | — |
+| JVM target | 19 (D-23) | — |
 | Сеть | Ktor Client (CIO) | пин при первой необходимости |
 | JSON | kotlinx.serialization | пин при первой необходимости |
 | DI | ручная сборка графа (`AppGraph`) в v1; Koin — только если граф разрастётся | — |
@@ -689,5 +689,5 @@ CREATE TABLE sync_state (
 
 ## 14. Prerequisites
 
-JDK 21; Gradle (или wrapper); Xcode Command Line Tools для `.dmg`; WiX Toolset для
+JDK 19+; Gradle (или wrapper); Xcode Command Line Tools для `.dmg`; WiX Toolset для
 `.msi`; API-ключ OpenRouter для M8; папка синхронизации Яндекс.Диска для M6.

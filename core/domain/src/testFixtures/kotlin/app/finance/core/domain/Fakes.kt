@@ -118,6 +118,9 @@ class FakeLedgerRepository : LedgerRepository {
 
     override suspend fun revisionByIdempotencyKey(key: String): CategoryMonthRevision? =
         revisions.firstOrNull { it.idempotencyKey == key }
+
+    override suspend fun revisionById(id: String): CategoryMonthRevision? =
+        revisions.firstOrNull { it.id == id }
 }
 
 /**

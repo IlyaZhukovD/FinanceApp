@@ -142,8 +142,11 @@ class LedgerPersistenceTest {
 
         assertEquals(Money(10_000), ledger.findCell(food.id, feb)?.amount)
         assertEquals(RevisionOp.UNDELETE, restored.revision.op)
-        assertEquals(3L, db.syncQueries.countPending().executeAsOne(), "CREATE + DELETE + UNDELETE")
+        assertEquals(3, cellPending().size, "CREATE + DELETE + UNDELETE")
     }
+
+    private fun cellPending() = db.syncQueries.selectPending(100L).executeAsList()
+        .filter { it.entity_type == SqlLedgerRepository.ENTITY_TYPE }
 
     @Test
     fun `журнал ревизий читается из базы в порядке создания`() = runTest {
@@ -167,13 +170,18 @@ class LedgerPersistenceTest {
         val food = category()
 
         recordAmount(expense(food.id, amount = 1_000))
-        assertEquals(1L, db.syncQueries.countPending().executeAsOne())
+        assertEquals(1, cellPending().size)
 
         time.advance(1_000)
         recordAmount(expense(food.id, amount = 500))
-        assertEquals(2L, db.syncQueries.countPending().executeAsOne())
+        assertEquals(2, cellPending().size)
+        // Ревизии тоже уходят в outbox (D-29): по одной на каждый ввод.
+        assertEquals(
+            2,
+            db.syncQueries.selectPending(100L).executeAsList().count { it.entity_type == SqlLedgerRepository.REVISION_ENTITY_TYPE },
+        )
 
-        val pending = db.syncQueries.selectPending(10L).executeAsList()
+        val pending = cellPending()
         assertEquals(
             listOf(SqlLedgerRepository.OPERATION_CREATE, SqlLedgerRepository.OPERATION_UPDATE),
             pending.map { it.operation },

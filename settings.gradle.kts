@@ -31,6 +31,12 @@ include(
     ":core:data",
     ":core:charts",
     ":core:ui",
+    // Разбор экспорта Notion (docs/IMPORT-NOTION.md §5): чистые функции без БД и UI.
+    ":core:import",
+    // Синхронизация через Яндекс.Диск (docs/SYNC-YANDEX.md): движок, формат пакетов, слияние.
+    ":core:sync",
+    // Сеть: Яндекс OAuth и REST API Диска (SPEC §4 core:network).
+    ":core:network",
     ":feature:ledger",
     ":feature:expenses",
     ":feature:income",
@@ -38,5 +44,9 @@ include(
     ":feature:analytics",
     ":feature:categories",
     ":feature:settings",
+    // Мастер импорта из Notion (F10.1, docs/IMPORT-NOTION.md §4).
+    ":feature:import",
+    // Интерфейс синхронизации: настройки, статус, автосинхронизация.
+    ":feature:sync",
     ":app:desktop",
 )

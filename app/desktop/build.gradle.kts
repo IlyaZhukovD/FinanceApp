@@ -9,13 +9,13 @@ plugins {
 
 kotlin {
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+        jvmTarget.set(JvmTarget.JVM_19)
     }
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_19
+    targetCompatibility = JavaVersion.VERSION_19
 }
 
 dependencies {
@@ -37,6 +37,10 @@ dependencies {
     implementation(project(":feature:categories"))
     // Настройки: выбор активной базы данных.
     implementation(project(":feature:settings"))
+    // Импорт из Notion (F10.1): мастер и use-case'ы импорта.
+    implementation(project(":feature:import"))
+    // Синхронизация через Яндекс.Диск (docs/SYNC-YANDEX.md): движок, транспорт, экран.
+    implementation(project(":feature:sync"))
 
     implementation(libs.coroutines.core)
     // Без него запуск окна падает: "Module with the Main dispatcher is missing".
@@ -62,12 +66,29 @@ compose.desktop {
             // Dmg собирается только на macOS, Msi — только на Windows (нужен WiX).
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi)
             packageName = "Finance"
-            packageVersion = "0.1.0"
+            // Версия приложения по SPEC.md §2. Установщики требуют MAJOR > 0, поэтому не 0.x.
+            packageVersion = "1.0.0"
             description = "Личный учёт финансов: расходы, доходы и активы по месяцам"
             vendor = "Finance"
 
+            // Модули урезанной Java внутри сборки (./gradlew :app:desktop:suggestRuntimeModules).
+            // Без java.sql драйвер SQLite не загрузится и приложение упадёт при открытии базы.
+            // java.net.http — запросы к Яндексу, jdk.httpserver — возврат из браузера после
+            // входа на 127.0.0.1, jdk.crypto.ec — TLS-шифры с эллиптическими кривыми (D-29).
+            modules("java.instrument", "java.sql", "jdk.unsupported", "java.net.http", "jdk.httpserver", "jdk.crypto.ec")
+
             macOS {
                 bundleID = "app.finance"
+            }
+
+            windows {
+                // Ярлыки на рабочем столе и в меню «Пуск» после установки .msi.
+                shortcut = true
+                menu = true
+                menuGroup = "Finance"
+                dirChooser = true
+                // Постоянный id продукта: новая версия .msi обновляет установленную, а не ставится рядом.
+                upgradeUuid = "8f0c2a4e-6b1d-4c39-9e57-3a1f0d7b2c64"
             }
         }
     }

@@ -2,9 +2,12 @@ package app.finance.core.charts
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -26,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -227,8 +231,14 @@ fun StackedBarChart(
     height: Dp = DEFAULT_CHART_HEIGHT,
     showLegend: Boolean = true,
     showTotalLine: Boolean = false,
+    /** Пункты легенды. Отличаются от [series], когда график отфильтрован по одной серии. */
+    legendItems: List<ChartSeries> = series,
+    /** Выбранная серия: остальные пункты легенды приглушаются. */
+    selectedSeriesId: String? = null,
+    /** Нажатие на пункт легенды; null — легенда не кликабельна. */
+    onLegendClick: ((String) -> Unit)? = null,
 ) {
-    val scale = VerticalScale.of(series)
+    val scale = VerticalScale.ofStacked(series)
     if (scale == null) {
         EmptyChart(hint = NO_DATA_HINT, modifier = modifier, height = height)
         return
@@ -244,6 +254,11 @@ fun StackedBarChart(
         currency = currency,
         height = height,
         modifier = modifier,
+        legendItems = legendItems,
+        selectedSeriesId = selectedSeriesId,
+        onLegendClick = onLegendClick,
+        // Категорий в столбце много: в подсказке крупные сверху, иначе их не найти.
+        sortTooltipByValue = true,
     ) { plotModifier ->
         Canvas(modifier = plotModifier) {
             drawGrid(scale = scale, gridColor = gridColor, zeroColor = zeroColor)
@@ -367,6 +382,10 @@ private fun ChartFrame(
     currency: String,
     height: Dp,
     modifier: Modifier = Modifier,
+    legendItems: List<ChartSeries> = legend,
+    selectedSeriesId: String? = null,
+    onLegendClick: ((String) -> Unit)? = null,
+    sortTooltipByValue: Boolean = false,
     plot: @Composable (Modifier) -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -381,15 +400,16 @@ private fun ChartFrame(
                 labels = labels,
                 series = legend,
                 currency = currency,
+                sortTooltipByValue = sortTooltipByValue,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 plot = plot,
             )
         }
         Spacer(modifier = Modifier.height(FinanceSpace.Xs))
         XAxisLabels(labels = thinLabels(labels, MAX_X_LABELS))
-        if (showLegend && legend.size > 1) {
+        if (showLegend && legendItems.size > 1) {
             Spacer(modifier = Modifier.height(FinanceSpace.Sm))
-            Legend(series = legend)
+            Legend(series = legendItems, selectedId = selectedSeriesId, onClick = onLegendClick)
         }
     }
 }
@@ -406,6 +426,7 @@ private fun HoverablePlot(
     labels: List<String>,
     series: List<ChartSeries>,
     currency: String,
+    sortTooltipByValue: Boolean = false,
     modifier: Modifier = Modifier,
     plot: @Composable (Modifier) -> Unit,
 ) {
@@ -460,7 +481,15 @@ private fun HoverablePlot(
 
             ChartTooltip(
                 label = labels[index],
-                series = series,
+                // Сортировка по значению месяца под курсором: от большего к меньшему, пустые в конце.
+                series = if (sortTooltipByValue) {
+                    series.sortedWith(
+                        compareByDescending<ChartSeries> { it.points.getOrNull(index)?.valueMinor != null }
+                            .thenByDescending { it.points.getOrNull(index)?.valueMinor ?: 0L },
+                    )
+                } else {
+                    series
+                },
                 index = index,
                 currency = currency,
                 modifier = Modifier
@@ -492,7 +521,11 @@ private fun ChartTooltip(
             verticalArrangement = Arrangement.spacedBy(FinanceSpace.Xs),
         ) {
             Text(text = label, style = MaterialTheme.typography.labelMedium)
-            series.forEach { one ->
+            // Подсказка ограничена высотой графика: длинный список обрезался. Показываем первые
+            // строки, остальное — одной строкой «ещё N» с суммой.
+            val shown = if (series.size > MAX_TOOLTIP_ROWS) series.take(MAX_TOOLTIP_ROWS - 1) else series
+            val rest = series.drop(shown.size)
+            shown.forEach { one ->
                 val value = one.points.getOrNull(index)?.valueMinor
                 val previous = one.points.getOrNull(index - 1)?.valueMinor
                 val percent = if (value != null && previous != null) {
@@ -507,9 +540,28 @@ private fun ChartTooltip(
                     share = percent?.let { "${if (it > 0) "+" else ""}$it %" } ?: "",
                 )
             }
+            if (rest.isNotEmpty()) {
+                val restTotal = rest.sumOf { it.points.getOrNull(index)?.valueMinor ?: 0L }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "ещё ${rest.size}",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinancePalette.TextSecondary,
+                    )
+                    Text(
+                        text = Money(restTotal, currency).formatRu(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinancePalette.TextSecondary,
+                    )
+                }
+            }
         }
     }
 }
+
+/** Сколько строк помещается в подсказку по высоте графика (вместе со строкой «ещё N»). */
+private const val MAX_TOOLTIP_ROWS = 8
 
 /** Строка легенды и тултипа: маркер, название, значение и доля/дельта справа. */
 @Composable
@@ -566,6 +618,9 @@ private fun YAxisLabels(scale: VerticalScale, currency: String, modifier: Modifi
 @Composable
 private fun XAxisLabels(labels: List<String>, modifier: Modifier = Modifier) {
     Row(modifier = modifier.fillMaxWidth()) {
+        // Отступ на ширину подписей оси Y: слоты подписей должны совпадать со слотами
+        // столбцов, а область графика начинается правее оси (иначе подписи съезжали влево).
+        Spacer(modifier = Modifier.width(Y_AXIS_WIDTH + FinanceSpace.Sm))
         labels.forEach { label ->
             Text(
                 text = label,
@@ -581,13 +636,27 @@ private fun XAxisLabels(labels: List<String>, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Legend(series: List<ChartSeries>, modifier: Modifier = Modifier) {
-    Row(
+@OptIn(ExperimentalLayoutApi::class)
+private fun Legend(
+    series: List<ChartSeries>,
+    modifier: Modifier = Modifier,
+    selectedId: String? = null,
+    onClick: ((String) -> Unit)? = null,
+) {
+    // Перенос по строкам: в одну строку десятки категорий не помещались и обрезались.
+    FlowRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(FinanceSpace.Md),
+        verticalArrangement = Arrangement.spacedBy(FinanceSpace.Xs),
     ) {
         series.forEach { one ->
+            val dimmed = selectedId != null && selectedId != one.id
             Row(
+                modifier = Modifier
+                    .alpha(if (dimmed) DIMMED_ALPHA else 1f)
+                    .then(
+                        if (onClick == null) Modifier else Modifier.clickable { onClick(one.id) },
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(FinanceSpace.Xs + 2.dp),
             ) {
@@ -599,7 +668,7 @@ private fun Legend(series: List<ChartSeries>, modifier: Modifier = Modifier) {
                 Text(
                     text = one.title,
                     style = MaterialTheme.typography.labelSmall,
-                    color = FinancePalette.TextSecondary,
+                    color = if (selectedId == one.id) FinancePalette.TextPrimary else FinancePalette.TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -607,6 +676,9 @@ private fun Legend(series: List<ChartSeries>, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/** Прозрачность невыбранных пунктов легенды при фильтре по одной серии. */
+private const val DIMMED_ALPHA = 0.4f
 
 // ── Отрисовка ────────────────────────────────────────────────────────────────
 
@@ -804,7 +876,7 @@ private val DEFAULT_CHART_HEIGHT: Dp = 220.dp
 private val DEFAULT_DONUT_SIZE: Dp = 160.dp
 private val DEFAULT_DONUT_THICKNESS: Dp = FinanceSize.DonutThickness
 private val Y_AXIS_WIDTH: Dp = 108.dp
-private val TOOLTIP_WIDTH: Dp = 260.dp
+private val TOOLTIP_WIDTH: Dp = 320.dp
 private val MAX_BAR_WIDTH: Dp = FinanceSize.BarWidth
 private const val NO_DATA_HINT = "Нет данных за период"
 private const val MAX_X_LABELS = 8

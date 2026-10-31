@@ -73,6 +73,9 @@ interface LedgerRepository {
 
     suspend fun insertRevision(revision: CategoryMonthRevision)
 
+    /** Ревизия по id — нужна отмене импорта: пакет хранит ссылки на свои ревизии. */
+    suspend fun revisionById(id: String): CategoryMonthRevision?
+
     /**
      * Поиск ревизии по ключу идемпотентности. Нужен импорту: повторный прогон того же
      * файла не должен удваивать суммы (SPEC.md F10.2).

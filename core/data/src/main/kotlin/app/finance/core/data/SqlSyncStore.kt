@@ -213,6 +213,7 @@ class SqlSyncStore(
             deleted_at_utc = account.deletedAtUtc,
             term_months = account.termMonths?.toLong(),
             interest_day = account.interestDay?.toLong(),
+            capitalization = account.capitalization.name,
         )
     }
 
@@ -231,6 +232,7 @@ class SqlSyncStore(
             deleted_at_utc = account.deletedAtUtc,
             term_months = account.termMonths?.toLong(),
             interest_day = account.interestDay?.toLong(),
+            capitalization = account.capitalization.name,
             id = account.id,
         )
     }

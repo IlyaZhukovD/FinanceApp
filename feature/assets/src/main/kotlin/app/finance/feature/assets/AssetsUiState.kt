@@ -139,6 +139,8 @@ data class AccountRow(
     val accruedInterest: Money?,
     /** Месяц последнего введённого остатка — база прогноза или переноса. */
     val basedOnPeriod: Period?,
+    /** Набежавшие проценты вклада с выплатой в конце срока: в сумму не входят (D-32). */
+    val pendingInterest: Money? = null,
     val previousBalance: Money?,
     val delta: Money?,
     val contribution: Money?,
@@ -198,6 +200,8 @@ data class AccountDialogState(
     val termText: String = "",
     /** День начисления процентов (1..31); пусто — упрощённый расчёт `ставка / 12` (D-31). */
     val interestDayText: String = "",
+    /** Проценты выплачиваются в конце срока, а не прибавляются каждый месяц (D-32). */
+    val interestAtMaturity: Boolean = false,
     /** Сумма, положенная на счёт при открытии: создаёт первый остаток месяца (D-21). */
     val initialBalanceText: String = "",
     val noteText: String = "",

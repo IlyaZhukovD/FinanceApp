@@ -103,3 +103,103 @@ class DepositInterestTest {
         assertEquals(Money(848_267, "RUB"), interest)
     }
 }
+
+/**
+ * Вклад с выплатой процентов в конце срока (D-32).
+ *
+ * Эталон — «Сейв» в Яндекс Пэй: 107 102,03 ₽ под 14% на 3 месяца, открыт 8 августа 2026,
+ * проценты простые и выплачиваются 8 ноября.
+ */
+class InterestAtMaturityTest {
+
+    private val deposits = Category(
+        id = "deposits",
+        section = CategorySection.ASSET,
+        name = "Вклады",
+        color = "#336699",
+        balancePolicy = AssetBalancePolicy.FIXED_RATE,
+        createdAtUtc = 0,
+        updatedAtUtc = 0,
+    )
+
+    private fun account(interestDay: Int? = 8) = AssetAccount(
+        id = "y",
+        categoryId = deposits.id,
+        name = "Сейв",
+        openedPeriod = Period(2026, 8),
+        annualRateBp = 1400,
+        termMonths = 3,
+        interestDay = interestDay,
+        capitalization = DepositCapitalization.AT_MATURITY,
+        createdAtUtc = 0,
+        updatedAtUtc = 0,
+    )
+
+    private val opening = AssetSnapshot(
+        id = "s",
+        accountId = "y",
+        period = Period(2026, 8),
+        balance = Money(10_710_203, "RUB"),
+        createdAtUtc = 0,
+        updatedAtUtc = 0,
+    )
+
+    private fun valueAt(period: Period, interestDay: Int? = 8, vararg extra: AssetSnapshot): AccountBalance =
+        AssetBalances.resolve(period, listOf(account(interestDay)), listOf(deposits), listOf(opening) + extra).single()
+
+    @Test
+    fun `до конца срока сумма не растёт, а проценты копятся отдельно`() {
+        val sep = valueAt(Period(2026, 9))
+        assertEquals(Money(10_710_203, "RUB"), sep.balance)
+        assertEquals(Money(127_349, "RUB"), sep.pendingInterest) // 31 день
+        assertEquals(null, sep.accruedInterest)
+        assertEquals(BalanceSource.PROJECTED, sep.source)
+
+        val oct = valueAt(Period(2026, 10))
+        assertEquals(Money(10_710_203, "RUB"), oct.balance)
+        assertEquals(Money(250_589, "RUB"), oct.pendingInterest) // 61 день
+    }
+
+    @Test
+    fun `в месяце окончания проценты прибавляются один раз — без капитализации`() {
+        val nov = valueAt(Period(2026, 11))
+        // 92 дня простого процента; с ежемесячной капитализацией вышло бы 110 926 ₽.
+        assertEquals(Money(377_938, "RUB"), nov.accruedInterest)
+        assertEquals(Money(11_088_141, "RUB"), nov.balance)
+        assertEquals(null, nov.pendingInterest)
+        assertEquals(false, nov.isMatured)
+    }
+
+    @Test
+    fun `после срока сумма переносится, вклад предлагается закрыть`() {
+        val dec = valueAt(Period(2026, 12))
+        assertEquals(Money(11_088_141, "RUB"), dec.balance)
+        assertEquals(BalanceSource.CARRIED, dec.source)
+        assertEquals(true, dec.isMatured)
+    }
+
+    @Test
+    fun `введённая в месяце окончания сумма важнее расчёта`() {
+        val bank = AssetSnapshot(
+            id = "nov",
+            accountId = "y",
+            period = Period(2026, 11),
+            balance = Money(11_084_036, "RUB"),
+            createdAtUtc = 0,
+            updatedAtUtc = 0,
+        )
+        assertEquals(bank.balance, valueAt(Period(2026, 11), 8, bank).balance)
+        assertEquals(bank.balance, valueAt(Period(2027, 1), 8, bank).balance)
+    }
+
+    @Test
+    fun `без дня начисления процент считается по месяцам — ставка на 12`() {
+        assertEquals(Money(124_952, "RUB"), valueAt(Period(2026, 9), null).pendingInterest)
+        assertEquals(Money(374_857, "RUB"), valueAt(Period(2026, 11), null).accruedInterest)
+    }
+
+    @Test
+    fun `выплата в конце срока без срока недопустима`() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> { account().copy(termMonths = null) }
+    }
+}

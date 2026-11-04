@@ -54,6 +54,11 @@ data class AccountBalance(
     val accruedInterest: Money? = null,
     /** Срок вклада истёк: ставка больше не начисляется, счёт предлагаем закрыть (D-21). */
     val isMatured: Boolean = false,
+    /**
+     * Проценты, накопленные к этому месяцу, но ещё не прибавленные к вкладу: выплата в
+     * конце срока (D-32). В [balance] и итоги не входят, показываются отдельной строкой.
+     */
+    val pendingInterest: Money? = null,
 ) {
     /** Значение входит в итоги месяца. */
     val isCounted: Boolean get() = balance != null && source.isCounted
@@ -182,8 +187,20 @@ object AssetBalances {
      */
     fun dailyInterest(balance: Money, annualRateBp: Int, interestDay: Int, period: Period): Money {
         if (annualRateBp == 0) return Money(0L, balance.currency)
-        val from = creditDate(period.minusMonths(1), interestDay)
-        val to = creditDate(period, interestDay)
+        return simpleInterest(
+            balance,
+            annualRateBp,
+            creditDate(period.minusMonths(1), interestDay),
+            creditDate(period, interestDay),
+        )
+    }
+
+    /**
+     * Простой процент за отрезок дат: `сумма × ставка × Σ(1 / дней в году)` по дням
+     * `[from, to)` (D-31). Отрезок через Новый год делится по годам.
+     */
+    fun simpleInterest(balance: Money, annualRateBp: Int, from: LocalDate, to: LocalDate): Money {
+        if (annualRateBp == 0 || to <= from) return Money(0L, balance.currency)
         var yearFraction = BigDecimal.ZERO
         var cursor = from
         while (cursor < to) {
@@ -279,6 +296,9 @@ object AssetBalances {
         }
 
         val maturity = account.maturityPeriod
+        if (maturity != null && account.capitalization == DepositCapitalization.AT_MATURITY) {
+            return projectAtMaturity(account, period, base, rateBp, maturity)
+        }
         val isMatured = maturity != null && period > maturity
         val lastAccrual = if (isMatured) requireNotNull(maturity) else period
 
@@ -305,6 +325,84 @@ object AssetBalances {
             accruedInterest = if (isMatured) null else interest,
             isMatured = isMatured,
         )
+    }
+
+    /**
+     * Вклад с выплатой процентов в конце срока (D-32): процент простой, на сумму вклада.
+     *
+     * До месяца окончания остаток равен сумме вклада, а набежавшие проценты показываются
+     * отдельно ([AccountBalance.pendingInterest]) и в итоги не входят — как «под замком» у
+     * банка. В месяце окончания проценты прибавляются один раз. Считаются они всегда от
+     * месяца открытия: введённый посреди срока остаток — это та же сумма вклада.
+     */
+    private fun projectAtMaturity(
+        account: AssetAccount,
+        period: Period,
+        base: AssetSnapshot,
+        rateBp: Int,
+        maturity: Period,
+    ): AccountBalance {
+        if (base.period >= maturity) {
+            // Остаток введён в месяце окончания или позже — проценты в нём уже есть.
+            return AccountBalance(
+                accountId = account.id,
+                period = period,
+                balance = base.balance,
+                source = BalanceSource.CARRIED,
+                basedOnPeriod = base.period,
+                isMatured = true,
+            )
+        }
+        val principal = base.balance
+        val until = minOf(period, maturity)
+        val interest = interestSinceOpening(account, principal, rateBp, until)
+        return when {
+            period < maturity -> AccountBalance(
+                accountId = account.id,
+                period = period,
+                balance = principal,
+                source = BalanceSource.PROJECTED,
+                basedOnPeriod = base.period,
+                pendingInterest = interest,
+            )
+
+            period == maturity -> AccountBalance(
+                accountId = account.id,
+                period = period,
+                balance = principal + interest,
+                source = BalanceSource.PROJECTED,
+                basedOnPeriod = base.period,
+                accruedInterest = interest,
+            )
+
+            else -> AccountBalance(
+                accountId = account.id,
+                period = period,
+                balance = principal + interest,
+                source = BalanceSource.CARRIED,
+                basedOnPeriod = base.period,
+                isMatured = true,
+            )
+        }
+    }
+
+    /** Простой процент от открытия вклада до [until]: по дням или по `ставка / 12` за месяц. */
+    private fun interestSinceOpening(account: AssetAccount, principal: Money, rateBp: Int, until: Period): Money {
+        val interestDay = account.interestDay
+        if (interestDay != null) {
+            return simpleInterest(
+                principal,
+                rateBp,
+                creditDate(account.openedPeriod, interestDay),
+                creditDate(until, interestDay),
+            )
+        }
+        val months = account.openedPeriod.monthsUntil(until).coerceAtLeast(0)
+        val interest = BigDecimal.valueOf(principal.minor)
+            .multiply(BigDecimal.valueOf(rateBp.toLong()).movePointLeft(BASIS_POINTS_SCALE))
+            .multiply(BigDecimal.valueOf(months.toLong()))
+            .divide(MONTHS_PER_YEAR, 0, RoundingMode.HALF_UP)
+        return Money(interest.longValueExact(), principal.currency)
     }
 
     private const val BASIS_POINTS_SCALE = 4

@@ -12,6 +12,7 @@ import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
 import app.finance.core.model.Category
 import app.finance.core.model.CategorySection
+import app.finance.core.model.DepositCapitalization
 import app.finance.core.model.Money
 import app.finance.core.model.Period
 import kotlin.test.AfterTest
@@ -114,6 +115,31 @@ class AssetPersistenceTest {
         assertEquals(1, stored?.rowVersion)
         assertTrue(stored?.isOpen == true)
         assertEquals(listOf(created.id), assets.accounts(includeClosed = false).map { it.id })
+    }
+
+    @Test
+    fun `день начисления и выплата процентов в конце срока сохраняются`() = runTest {
+        seedAssetCategory()
+        val account = AssetAccount(
+            id = "yandex",
+            categoryId = "banks",
+            name = "Сейв",
+            openedPeriod = jan,
+            annualRateBp = 1400,
+            termMonths = 3,
+            interestDay = 8,
+            capitalization = DepositCapitalization.AT_MATURITY,
+            createdAtUtc = 1,
+            updatedAtUtc = 1,
+        )
+        assets.insertAccount(account)
+
+        val stored = assets.accountById("yandex")
+        assertEquals(8, stored?.interestDay)
+        assertEquals(DepositCapitalization.AT_MATURITY, stored?.capitalization)
+
+        assets.updateAccount(account.copy(capitalization = DepositCapitalization.MONTHLY, updatedAtUtc = 2))
+        assertEquals(DepositCapitalization.MONTHLY, assets.accountById("yandex")?.capitalization)
     }
 
     @Test

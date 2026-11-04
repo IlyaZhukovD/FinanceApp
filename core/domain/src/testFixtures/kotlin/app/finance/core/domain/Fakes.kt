@@ -1,5 +1,6 @@
 package app.finance.core.domain
 
+import app.finance.core.model.DepositCapitalization
 import app.finance.core.model.AssetAccount
 import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
@@ -264,6 +265,7 @@ class DomainFixture {
         annualRateBp: Int? = null,
         termMonths: Int? = null,
         interestDay: Int? = null,
+        capitalization: DepositCapitalization = DepositCapitalization.MONTHLY,
     ): AssetAccount {
         val account = AssetAccount(
             id = id,
@@ -275,6 +277,7 @@ class DomainFixture {
             annualRateBp = annualRateBp,
             termMonths = termMonths,
             interestDay = interestDay,
+            capitalization = capitalization,
             createdAtUtc = time.now,
             updatedAtUtc = time.now,
         )

@@ -1,0 +1,5 @@
+-- Миграция 7 -> 8: когда прибавляются проценты по вкладу (SPEC.md F4.6, DECISIONS D-32).
+--
+-- Колонка дописывается в конец таблицы — так же она объявлена в Asset.sq. Существующие
+-- счета получают MONTHLY: их расчёт не меняется.
+ALTER TABLE asset_account ADD COLUMN capitalization TEXT NOT NULL DEFAULT 'MONTHLY';

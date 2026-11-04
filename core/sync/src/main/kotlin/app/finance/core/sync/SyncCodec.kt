@@ -1,5 +1,6 @@
 package app.finance.core.sync
 
+import app.finance.core.model.DepositCapitalization
 import app.finance.core.model.AssetAccount
 import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
@@ -147,6 +148,7 @@ object SyncCodec {
             put("annualRateBp", a.annualRateBp)
             put("termMonths", a.termMonths)
             put("interestDay", a.interestDay)
+            put("capitalization", a.capitalization.name)
             put("note", a.note)
             putMeta(a.createdAtUtc, a.updatedAtUtc, a.rowVersion, a.deletedAtUtc)
         }
@@ -216,6 +218,7 @@ object SyncCodec {
                 annualRateBp = o.intOrNull("annualRateBp"),
                 termMonths = o.intOrNull("termMonths"),
                 interestDay = o.intOrNull("interestDay"),
+                capitalization = DepositCapitalization.fromDb(o.strOrNull("capitalization")),
                 note = o.strOrNull("note"),
                 createdAtUtc = o.long("createdAtUtc"),
                 updatedAtUtc = o.long("updatedAtUtc"),

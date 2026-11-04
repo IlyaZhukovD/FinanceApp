@@ -1,5 +1,6 @@
 package app.finance.core.domain
 
+import app.finance.core.model.DepositCapitalization
 import app.finance.core.model.AssetAccount
 import app.finance.core.model.AssetBalances
 import app.finance.core.model.AssetSnapshot
@@ -146,6 +147,8 @@ data class AccountInput(
      * упрощённо, `ставка / 12` (F4.6, D-31). Задаётся только вместе со ставкой.
      */
     val interestDay: Int? = null,
+    /** Когда проценты прибавляются к вкладу; «в конце срока» требует срока (D-32). */
+    val capitalization: DepositCapitalization = DepositCapitalization.MONTHLY,
     /**
      * Сумма, положенная на счёт при открытии: создаёт первый снапшот за [openedPeriod]
      * в той же транзакции (D-21). Для вклада обязательна — без базы процент считать не с чего.
@@ -206,6 +209,15 @@ class CreateAccount(
                         "а «${category.name}» оценивается иначе"
                 }
             }
+            if (input.capitalization == DepositCapitalization.AT_MATURITY) {
+                require(isDeposit) {
+                    "Выплата процентов в конце срока задаётся только вкладам, " +
+                        "а «${category.name}» оценивается иначе"
+                }
+                require(input.termMonths != null) {
+                    "Чтобы проценты выплачивались в конце срока, укажите срок вклада"
+                }
+            }
             if (input.termMonths != null) {
                 require(isDeposit) {
                     "Срок задаётся только для категорий с известным процентом, " +
@@ -239,6 +251,7 @@ class CreateAccount(
                 annualRateBp = input.annualRateBp,
                 termMonths = input.termMonths,
                 interestDay = input.interestDay,
+                capitalization = input.capitalization,
                 note = input.note?.trim()?.takeIf { it.isNotEmpty() },
                 createdAtUtc = now,
                 updatedAtUtc = now,

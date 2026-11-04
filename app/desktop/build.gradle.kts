@@ -68,7 +68,9 @@ compose.desktop {
             packageName = "Finance"
             // Версия приложения по SPEC.md §2. Установщики требуют MAJOR > 0, поэтому не 0.x.
             packageVersion = "1.0.0"
-            description = "Личный учёт финансов: расходы, доходы и активы по месяцам"
+            // Только ASCII: WiX собирает .msi с культурой en-us (кодовая страница 1252),
+            // кириллица здесь роняет light.exe с кодом 311 (LGHT0311).
+            description = "Personal finance: expenses, income and assets by month"
             vendor = "Finance"
 
             // Модули урезанной Java внутри сборки (./gradlew :app:desktop:suggestRuntimeModules).

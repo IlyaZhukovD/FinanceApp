@@ -36,6 +36,12 @@ data class AssetAccount(
      * В месяцах короче этого дня начисление переносится на последний день месяца.
      */
     val interestDay: Int? = null,
+    /**
+     * Когда проценты прибавляются к вкладу (D-32): каждый месяц ([DepositCapitalization.MONTHLY])
+     * или один раз в конце срока ([DepositCapitalization.AT_MATURITY]) — тогда это простые
+     * проценты на сумму вклада, и до конца срока они в остаток не входят.
+     */
+    val capitalization: DepositCapitalization = DepositCapitalization.MONTHLY,
     val note: String? = null,
     val createdAtUtc: Long,
     val updatedAtUtc: Long,
@@ -49,6 +55,9 @@ data class AssetAccount(
         }
         require(termMonths == null || termMonths > 0) {
             "Срок вклада задаётся числом месяцев больше нуля: $termMonths"
+        }
+        require(capitalization == DepositCapitalization.MONTHLY || termMonths != null) {
+            "Выплата процентов в конце срока требует срока вклада"
         }
         require(interestDay == null || interestDay in 1..MAX_INTEREST_DAY) {
             "День начисления процентов — число от 1 до $MAX_INTEREST_DAY: $interestDay"
@@ -84,6 +93,29 @@ data class AssetAccount(
 
     companion object {
         const val MAX_INTEREST_DAY = 31
+    }
+}
+
+/**
+ * Когда банк прибавляет проценты к вкладу (SPEC.md F4.6, D-32).
+ *
+ * Хранится в `asset_account.capitalization` именем константы.
+ */
+enum class DepositCapitalization {
+    /** Каждый месяц: следующий месяц считается от суммы с процентами (сложный процент). */
+    MONTHLY,
+
+    /**
+     * В конце срока: процент простой, начисляется на сумму вклада и до окончания срока
+     * в остаток не входит — банк показывает его отдельно, «под замком».
+     */
+    AT_MATURITY,
+    ;
+
+    companion object {
+        /** Неизвестное значение (например, от более новой версии) читается как [MONTHLY]. */
+        fun fromDb(value: String?): DepositCapitalization =
+            entries.firstOrNull { it.name == value } ?: MONTHLY
     }
 }
 

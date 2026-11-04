@@ -5,6 +5,7 @@ import app.finance.core.data.db.Asset_snapshot as SnapshotRow
 import app.finance.core.data.db.Category as CategoryRow
 import app.finance.core.data.db.Category_month as CellRow
 import app.finance.core.data.db.Category_month_revision as RevisionRow
+import app.finance.core.model.DepositCapitalization
 import app.finance.core.model.AssetAccount
 import app.finance.core.model.AssetBalancePolicy
 import app.finance.core.model.AssetSnapshot
@@ -81,6 +82,7 @@ internal fun AccountRow.toDomain(): AssetAccount = AssetAccount(
     annualRateBp = annual_rate_bp?.toInt(),
     termMonths = term_months?.toInt(),
     interestDay = interest_day?.toInt(),
+    capitalization = DepositCapitalization.fromDb(capitalization),
     note = note,
     createdAtUtc = created_at_utc,
     updatedAtUtc = updated_at_utc,

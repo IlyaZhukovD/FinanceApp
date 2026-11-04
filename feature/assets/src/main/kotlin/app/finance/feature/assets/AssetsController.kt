@@ -11,6 +11,7 @@ import app.finance.core.domain.RecordSnapshot
 import app.finance.core.domain.SnapshotInput
 import app.finance.core.domain.SnapshotResult
 import app.finance.core.model.AssetAccount
+import app.finance.core.model.DepositCapitalization
 import app.finance.core.model.AssetBalances
 import app.finance.core.model.AssetSnapshot
 import app.finance.core.model.AccountBalance
@@ -351,6 +352,7 @@ class AssetsController(
             rateText = if (projected) dialog.rateText else "",
             termText = if (projected) dialog.termText else "",
             interestDayText = if (projected) dialog.interestDayText else "",
+            interestAtMaturity = projected && dialog.interestAtMaturity,
             error = null,
         )
     }
@@ -364,6 +366,10 @@ class AssetsController(
 
     /** День начисления процентов вклада; пусто — упрощённый расчёт (F4.6, D-31). */
     fun setAccountInterestDay(text: String) = updateDialog { it.copy(interestDayText = text, error = null) }
+
+    /** Проценты в конце срока вместо ежемесячной капитализации (F4.6, D-32). */
+    fun setAccountInterestAtMaturity(value: Boolean) =
+        updateDialog { it.copy(interestAtMaturity = value, error = null) }
 
     /** Сумма, положенная на счёт при открытии: создаёт первый остаток месяца (D-21). */
     fun setAccountInitialBalance(text: String) =
@@ -406,6 +412,10 @@ class AssetsController(
             updateDialogError("День начисления — число от 1 до 31, например 6")
             return
         }
+        if (dialog.interestAtMaturity && termMonths == null) {
+            updateDialogError("Чтобы проценты выплачивались в конце срока, укажите срок вклада")
+            return
+        }
         val initialText = dialog.initialBalanceText.trim()
         val initialBalance = if (initialText.isEmpty()) null else Money.parse(initialText, currency)
         if (initialText.isNotEmpty() && initialBalance == null) {
@@ -442,6 +452,11 @@ class AssetsController(
                             annualRateBp = rateBp,
                             termMonths = termMonths,
                             interestDay = interestDay,
+                            capitalization = if (dialog.interestAtMaturity) {
+                                DepositCapitalization.AT_MATURITY
+                            } else {
+                                DepositCapitalization.MONTHLY
+                            },
                             initialBalance = initialBalance,
                             note = note,
                         ),
@@ -624,6 +639,7 @@ class AssetsController(
             badge = badgeOf(value),
             accruedInterest = value?.accruedInterest,
             basedOnPeriod = value?.basedOnPeriod,
+            pendingInterest = value?.pendingInterest,
             previousBalance = previous?.balance,
             delta = differenceOrNull(value?.balance, previous?.balance),
             contribution = recorded?.contribution,

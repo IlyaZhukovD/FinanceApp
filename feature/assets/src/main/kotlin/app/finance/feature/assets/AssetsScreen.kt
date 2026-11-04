@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -375,6 +376,14 @@ private fun AccountRowView(row: AccountRow, alternate: Boolean, showDivider: Boo
                     color = FinancePalette.TextSecondary,
                 )
             }
+            // Проценты «под замком»: набежали, но выплатятся в конце срока (D-32).
+            row.pendingInterest?.takeIf { it.isPositive() }?.let { interest ->
+                Text(
+                    text = "накоплено ${interest.formatRu()}, выплата в конце срока",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinancePalette.TextSecondary,
+                )
+            }
             row.delta?.let { delta ->
                 Text(
                     text = delta.formatSignedRu(),
@@ -555,6 +564,26 @@ private fun AccountDialog(
                             color = MutedColor,
                             modifier = Modifier.weight(1f).align(Alignment.CenterVertically),
                         )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable {
+                            controller.setAccountInterestAtMaturity(!dialog.interestAtMaturity)
+                        },
+                    ) {
+                        Checkbox(
+                            checked = dialog.interestAtMaturity,
+                            onCheckedChange = controller::setAccountInterestAtMaturity,
+                        )
+                        Column {
+                            Text("Проценты в конце срока", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "Без капитализации: до конца срока проценты показываются " +
+                                    "отдельно и в сумму не входят.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedColor,
+                            )
+                        }
                     }
                 }
                 OutlinedTextField(

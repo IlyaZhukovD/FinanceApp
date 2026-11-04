@@ -27,6 +27,15 @@ data class AssetAccount(
      * Дальше ставка не начисляется, а интерфейс предлагает закрыть счёт.
      */
     val termMonths: Int? = null,
+    /**
+     * День месяца, в который банк начисляет и капитализирует процент (1..31); null — день
+     * не указан, и прогноз считается упрощённо: `ставка / 12` за месяц (D-31).
+     *
+     * С указанным днём процент за месяц считается по фактическим дням между двумя датами
+     * начисления: `остаток × ставка × дни / дней в году` (ACT/365, в високосный год — 366).
+     * В месяцах короче этого дня начисление переносится на последний день месяца.
+     */
+    val interestDay: Int? = null,
     val note: String? = null,
     val createdAtUtc: Long,
     val updatedAtUtc: Long,
@@ -40,6 +49,9 @@ data class AssetAccount(
         }
         require(termMonths == null || termMonths > 0) {
             "Срок вклада задаётся числом месяцев больше нуля: $termMonths"
+        }
+        require(interestDay == null || interestDay in 1..MAX_INTEREST_DAY) {
+            "День начисления процентов — число от 1 до $MAX_INTEREST_DAY: $interestDay"
         }
         if (closedPeriod != null) {
             require(closedPeriod >= openedPeriod) {
@@ -69,6 +81,10 @@ data class AssetAccount(
      */
     fun isActiveAt(period: Period): Boolean =
         deletedAtUtc == null && period >= openedPeriod && (closedPeriod == null || period < closedPeriod)
+
+    companion object {
+        const val MAX_INTEREST_DAY = 31
+    }
 }
 
 /**

@@ -212,6 +212,7 @@ class SqlSyncStore(
             row_version = account.rowVersion.toLong(),
             deleted_at_utc = account.deletedAtUtc,
             term_months = account.termMonths?.toLong(),
+            interest_day = account.interestDay?.toLong(),
         )
     }
 
@@ -229,6 +230,7 @@ class SqlSyncStore(
             row_version = account.rowVersion.toLong(),
             deleted_at_utc = account.deletedAtUtc,
             term_months = account.termMonths?.toLong(),
+            interest_day = account.interestDay?.toLong(),
             id = account.id,
         )
     }

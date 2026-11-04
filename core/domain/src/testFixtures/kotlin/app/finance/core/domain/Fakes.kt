@@ -263,6 +263,7 @@ class DomainFixture {
         closedPeriod: Period? = null,
         annualRateBp: Int? = null,
         termMonths: Int? = null,
+        interestDay: Int? = null,
     ): AssetAccount {
         val account = AssetAccount(
             id = id,
@@ -273,6 +274,7 @@ class DomainFixture {
             closedPeriod = closedPeriod,
             annualRateBp = annualRateBp,
             termMonths = termMonths,
+            interestDay = interestDay,
             createdAtUtc = time.now,
             updatedAtUtc = time.now,
         )

@@ -2,6 +2,8 @@ package app.finance.core.model
 
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 /**
  * Откуда взялось значение счёта за месяц (SPEC.md F4.6, D-21).
@@ -170,6 +172,41 @@ object AssetBalances {
         return Money(interest.longValueExact(), balance.currency)
     }
 
+    /**
+     * Процент за месяц [period] по фактическим дням (D-31): от даты начисления в прошлом
+     * месяце до даты начисления в [period], `остаток × ставка × дни / дней в году`.
+     *
+     * Так считают банки: процент копится каждый день, а капитализируется раз в месяц в
+     * [interestDay]. Отрезок, пересекающий Новый год, делится по годам — дни високосного
+     * года делятся на 366. Округление до копеек один раз на начисление.
+     */
+    fun dailyInterest(balance: Money, annualRateBp: Int, interestDay: Int, period: Period): Money {
+        if (annualRateBp == 0) return Money(0L, balance.currency)
+        val from = creditDate(period.minusMonths(1), interestDay)
+        val to = creditDate(period, interestDay)
+        var yearFraction = BigDecimal.ZERO
+        var cursor = from
+        while (cursor < to) {
+            val yearEnd = LocalDate.of(cursor.year + 1, 1, 1)
+            val segmentEnd = if (yearEnd < to) yearEnd else to
+            val days = ChronoUnit.DAYS.between(cursor, segmentEnd)
+            yearFraction += BigDecimal.valueOf(days)
+                .divide(BigDecimal.valueOf(cursor.lengthOfYear().toLong()), RATE_SCALE, RoundingMode.HALF_UP)
+            cursor = segmentEnd
+        }
+        val interest = BigDecimal.valueOf(balance.minor)
+            .multiply(BigDecimal.valueOf(annualRateBp.toLong()).movePointLeft(BASIS_POINTS_SCALE))
+            .multiply(yearFraction)
+            .setScale(0, RoundingMode.HALF_UP)
+        return Money(interest.longValueExact(), balance.currency)
+    }
+
+    /** Дата начисления в месяце: [day] или последний день, если месяц короче. */
+    fun creditDate(period: Period, day: Int): LocalDate {
+        val first = LocalDate.of(period.year, period.month, 1)
+        return first.withDayOfMonth(minOf(day, first.lengthOfMonth()))
+    }
+
     private fun valueOf(
         account: AssetAccount,
         period: Period,
@@ -247,8 +284,14 @@ object AssetBalances {
 
         var balance = base.balance
         var interest = Money(0L, balance.currency)
-        repeat(base.period.monthsUntil(lastAccrual)) {
-            val accrued = monthlyInterest(balance, rateBp)
+        val interestDay = account.interestDay
+        // Начисления идут в месяцах ПОСЛЕ базового остатка: он уже включает процент своего месяца.
+        for (month in base.period.plusMonths(1).monthsTo(lastAccrual)) {
+            val accrued = if (interestDay == null) {
+                monthlyInterest(balance, rateBp)
+            } else {
+                dailyInterest(balance, rateBp, interestDay, month)
+            }
             balance += accrued
             interest = accrued
         }

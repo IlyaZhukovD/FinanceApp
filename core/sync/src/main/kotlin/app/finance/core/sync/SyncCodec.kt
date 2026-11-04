@@ -146,6 +146,7 @@ object SyncCodec {
             put("closedPeriod", a.closedPeriod?.key)
             put("annualRateBp", a.annualRateBp)
             put("termMonths", a.termMonths)
+            put("interestDay", a.interestDay)
             put("note", a.note)
             putMeta(a.createdAtUtc, a.updatedAtUtc, a.rowVersion, a.deletedAtUtc)
         }
@@ -214,6 +215,7 @@ object SyncCodec {
                 closedPeriod = o.intOrNull("closedPeriod")?.let(Period::ofKey),
                 annualRateBp = o.intOrNull("annualRateBp"),
                 termMonths = o.intOrNull("termMonths"),
+                interestDay = o.intOrNull("interestDay"),
                 note = o.strOrNull("note"),
                 createdAtUtc = o.long("createdAtUtc"),
                 updatedAtUtc = o.long("updatedAtUtc"),

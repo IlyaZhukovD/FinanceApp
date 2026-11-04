@@ -539,6 +539,24 @@ private fun AccountDialog(
                         Spacer(modifier = Modifier.weight(1f))
                     }
                 }
+                if (isDeposit) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = dialog.interestDayText,
+                            onValueChange = controller::setAccountInterestDay,
+                            label = { Text("День начисления %") },
+                            placeholder = { Text("например 6") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "Процент считается по дням, как в банке. Пусто — ставка / 12.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedColor,
+                            modifier = Modifier.weight(1f).align(Alignment.CenterVertically),
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = dialog.noteText,
                     onValueChange = controller::setAccountNote,

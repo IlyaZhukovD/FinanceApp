@@ -14,7 +14,10 @@ CREATE TABLE asset_account (
     -- Срок вклада в месяцах (F4.6, D-21). Колонка добавлена миграцией `2.sqm` и обязана
     -- стоять В КОНЦЕ: запросы используют SELECT *, а маппер разбирает строку по порядку
     -- колонок из этого файла, тогда как ALTER TABLE дописывает колонки в конец таблицы.
-    term_months INTEGER
+    term_months INTEGER,
+    -- День начисления процентов вклада, 1..31 (F4.6, D-31). Добавлена миграцией `6.sqm`,
+    -- поэтому тоже стоит в конце.
+    interest_day INTEGER
 );
 
 CREATE INDEX idx_asset_account_category ON asset_account(category_id);
@@ -64,13 +67,13 @@ insertAccount:
 INSERT INTO asset_account (
     id, category_id, name, currency, opened_period, closed_period,
     annual_rate_bp, note, created_at_utc, updated_at_utc, row_version, deleted_at_utc,
-    term_months
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    term_months, interest_day
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 updateAccount:
 UPDATE asset_account
 SET name = ?, category_id = ?, currency = ?, annual_rate_bp = ?, note = ?,
-    term_months = ?, updated_at_utc = ?, row_version = row_version + 1
+    term_months = ?, interest_day = ?, updated_at_utc = ?, row_version = row_version + 1
 WHERE id = ?;
 
 closeAccount:

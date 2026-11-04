@@ -142,6 +142,11 @@ data class AccountInput(
      */
     val termMonths: Int? = null,
     /**
+     * День месяца, в который банк начисляет процент (1..31); null — прогноз считается
+     * упрощённо, `ставка / 12` (F4.6, D-31). Задаётся только вместе со ставкой.
+     */
+    val interestDay: Int? = null,
+    /**
      * Сумма, положенная на счёт при открытии: создаёт первый снапшот за [openedPeriod]
      * в той же транзакции (D-21). Для вклада обязательна — без базы процент считать не с чего.
      */
@@ -195,6 +200,12 @@ class CreateAccount(
                         "а «${category.name}» оценивается иначе"
                 }
             }
+            if (input.interestDay != null) {
+                require(isDeposit) {
+                    "День начисления задаётся только для категорий с известным процентом, " +
+                        "а «${category.name}» оценивается иначе"
+                }
+            }
             if (input.termMonths != null) {
                 require(isDeposit) {
                     "Срок задаётся только для категорий с известным процентом, " +
@@ -227,6 +238,7 @@ class CreateAccount(
                 openedPeriod = input.openedPeriod,
                 annualRateBp = input.annualRateBp,
                 termMonths = input.termMonths,
+                interestDay = input.interestDay,
                 note = input.note?.trim()?.takeIf { it.isNotEmpty() },
                 createdAtUtc = now,
                 updatedAtUtc = now,

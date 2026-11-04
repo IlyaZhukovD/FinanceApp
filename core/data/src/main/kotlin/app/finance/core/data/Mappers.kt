@@ -80,6 +80,7 @@ internal fun AccountRow.toDomain(): AssetAccount = AssetAccount(
     closedPeriod = closed_period?.toInt()?.let(Period::ofKey),
     annualRateBp = annual_rate_bp?.toInt(),
     termMonths = term_months?.toInt(),
+    interestDay = interest_day?.toInt(),
     note = note,
     createdAtUtc = created_at_utc,
     updatedAtUtc = updated_at_utc,

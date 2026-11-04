@@ -57,6 +57,7 @@ class SqlAssetRepository(
             row_version = account.rowVersion.toLong(),
             deleted_at_utc = account.deletedAtUtc,
             term_months = account.termMonths?.toLong(),
+            interest_day = account.interestDay?.toLong(),
         )
         enqueue(ENTITY_ACCOUNT, account.id, OPERATION_CREATE, account.rowVersion, account.updatedAtUtc)
     }
@@ -73,6 +74,7 @@ class SqlAssetRepository(
             annual_rate_bp = account.annualRateBp?.toLong(),
             note = account.note,
             term_months = account.termMonths?.toLong(),
+            interest_day = account.interestDay?.toLong(),
             updated_at_utc = account.updatedAtUtc,
             id = account.id,
         )

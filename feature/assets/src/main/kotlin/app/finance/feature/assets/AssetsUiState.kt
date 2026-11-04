@@ -196,6 +196,8 @@ data class AccountDialogState(
     val rateText: String = "",
     /** Срок вклада в месяцах; пусто — бессрочно (F4.6, D-21). */
     val termText: String = "",
+    /** День начисления процентов (1..31); пусто — упрощённый расчёт `ставка / 12` (D-31). */
+    val interestDayText: String = "",
     /** Сумма, положенная на счёт при открытии: создаёт первый остаток месяца (D-21). */
     val initialBalanceText: String = "",
     val noteText: String = "",

@@ -350,6 +350,7 @@ class AssetsController(
             categoryId = categoryId,
             rateText = if (projected) dialog.rateText else "",
             termText = if (projected) dialog.termText else "",
+            interestDayText = if (projected) dialog.interestDayText else "",
             error = null,
         )
     }
@@ -360,6 +361,9 @@ class AssetsController(
 
     /** Срок вклада в месяцах; пусто — бессрочно (F4.6, D-21). */
     fun setAccountTerm(text: String) = updateDialog { it.copy(termText = text, error = null) }
+
+    /** День начисления процентов вклада; пусто — упрощённый расчёт (F4.6, D-31). */
+    fun setAccountInterestDay(text: String) = updateDialog { it.copy(interestDayText = text, error = null) }
 
     /** Сумма, положенная на счёт при открытии: создаёт первый остаток месяца (D-21). */
     fun setAccountInitialBalance(text: String) =
@@ -394,6 +398,12 @@ class AssetsController(
         val termMonths = if (termText.isEmpty()) null else termText.toIntOrNull()
         if (termText.isNotEmpty() && (termMonths == null || termMonths <= 0)) {
             updateDialogError("Срок вводится числом месяцев, например 12")
+            return
+        }
+        val dayText = dialog.interestDayText.trim()
+        val interestDay = if (dayText.isEmpty()) null else dayText.toIntOrNull()
+        if (dayText.isNotEmpty() && (interestDay == null || interestDay !in 1..AssetAccount.MAX_INTEREST_DAY)) {
+            updateDialogError("День начисления — число от 1 до 31, например 6")
             return
         }
         val initialText = dialog.initialBalanceText.trim()
@@ -431,6 +441,7 @@ class AssetsController(
                             openedPeriod = openedPeriod,
                             annualRateBp = rateBp,
                             termMonths = termMonths,
+                            interestDay = interestDay,
                             initialBalance = initialBalance,
                             note = note,
                         ),

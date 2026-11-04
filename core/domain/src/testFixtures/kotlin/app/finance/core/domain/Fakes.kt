@@ -266,6 +266,7 @@ class DomainFixture {
         termMonths: Int? = null,
         interestDay: Int? = null,
         capitalization: DepositCapitalization = DepositCapitalization.MONTHLY,
+        monthlyReminder: Boolean = false,
     ): AssetAccount {
         val account = AssetAccount(
             id = id,
@@ -278,6 +279,7 @@ class DomainFixture {
             termMonths = termMonths,
             interestDay = interestDay,
             capitalization = capitalization,
+            monthlyReminder = monthlyReminder,
             createdAtUtc = time.now,
             updatedAtUtc = time.now,
         )

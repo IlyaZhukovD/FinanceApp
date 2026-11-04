@@ -317,4 +317,74 @@ class AssetsControllerTest {
         assertEquals(0, state.header.accountCount)
         assertFalse(state.header.hasData)
     }
+
+    // ── Напоминание обновить остаток (D-34) ─────────────────────────────────
+
+    private fun TestScope.controllerAt(now: String, period: Period): AssetsController = AssetsController(
+        assets = fx.assets,
+        categories = fx.categories,
+        recordSnapshot = fx.recordSnapshot,
+        createAccount = fx.createAccount,
+        closeAccount = fx.closeAccount,
+        assetSummary = fx.assetSummary,
+        initialPeriod = period,
+        clock = Clock.fixed(Instant.parse(now), ZoneOffset.UTC),
+        zone = zone,
+        scope = this,
+        ioDispatcher = StandardTestDispatcher(testScheduler),
+    )
+
+    private fun seedReminderAccounts() {
+        fx.category("cards", "Счёт под ключ", section = CategorySection.ASSET)
+        fx.account("key", "Счёт в Т", categoryId = "cards", openedPeriod = jan, monthlyReminder = true)
+        fx.account("cash", "Наличные", categoryId = "cards", openedPeriod = jan)
+        fx.snapshot("key", jan, balanceMinor = 30_000_000)
+        fx.snapshot("cash", jan, balanceMinor = 500_000)
+    }
+
+    @Test
+    fun `счёт с напоминанием попадает в плашку в конце месяца, а сумма учитывается`() = runTest {
+        seedReminderAccounts()
+        val controller = controllerAt("2026-02-25T12:00:00Z", feb)
+        controller.start()
+        advanceUntilIdle()
+
+        val reminder = assertNotNull(controller.state.value.reminder)
+        assertEquals(listOf("key"), reminder.accounts.map { it.accountId }, "Только счёт с флагом")
+        assertTrue(reminder.title.startsWith("Обновите остаток"))
+        assertEquals(Money(30_000_000), reminder.accounts.single().carriedBalance)
+        // Плашка лишь напоминает: перенесённая сумма по-прежнему входит в Net Worth.
+        assertEquals(Money(30_500_000), controller.state.value.header.netWorth)
+    }
+
+    @Test
+    fun `в начале текущего месяца и в будущих месяцах напоминания нет`() = runTest {
+        seedReminderAccounts()
+        val early = controllerAt("2026-02-10T12:00:00Z", feb)
+        early.start()
+        advanceUntilIdle()
+        assertNull(early.state.value.reminder)
+
+        val future = controllerAt("2026-02-25T12:00:00Z", mar)
+        future.start()
+        advanceUntilIdle()
+        assertNull(future.state.value.reminder)
+    }
+
+    @Test
+    fun `за прошедший месяц напоминание есть, пока остаток не введён`() = runTest {
+        seedReminderAccounts()
+        val controller = controllerAt("2026-03-03T12:00:00Z", feb)
+        controller.start()
+        advanceUntilIdle()
+        assertNotNull(controller.state.value.reminder)
+
+        controller.openConfirmBalances()
+        controller.setConfirmAmount("key", "1500")
+        controller.submitConfirmBalances()
+        advanceUntilIdle()
+
+        assertNull(controller.state.value.reminder)
+        assertEquals(Money(30_150_000), fx.assets.findSnapshot("key", feb)?.balance)
+    }
 }

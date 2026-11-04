@@ -149,6 +149,8 @@ data class AccountInput(
     val interestDay: Int? = null,
     /** Когда проценты прибавляются к вкладу; «в конце срока» требует срока (D-32). */
     val capitalization: DepositCapitalization = DepositCapitalization.MONTHLY,
+    /** Напоминать обновить остаток в конце месяца — для любой категории (D-34). */
+    val monthlyReminder: Boolean = false,
     /**
      * Сумма, положенная на счёт при открытии: создаёт первый снапшот за [openedPeriod]
      * в той же транзакции (D-21). Для вклада обязательна — без базы процент считать не с чего.
@@ -252,6 +254,7 @@ class CreateAccount(
                 termMonths = input.termMonths,
                 interestDay = input.interestDay,
                 capitalization = input.capitalization,
+                monthlyReminder = input.monthlyReminder,
                 note = input.note?.trim()?.takeIf { it.isNotEmpty() },
                 createdAtUtc = now,
                 updatedAtUtc = now,

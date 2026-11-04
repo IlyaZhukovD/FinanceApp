@@ -83,6 +83,7 @@ internal fun AccountRow.toDomain(): AssetAccount = AssetAccount(
     termMonths = term_months?.toInt(),
     interestDay = interest_day?.toInt(),
     capitalization = DepositCapitalization.fromDb(capitalization),
+    monthlyReminder = monthly_reminder,
     note = note,
     createdAtUtc = created_at_utc,
     updatedAtUtc = updated_at_utc,

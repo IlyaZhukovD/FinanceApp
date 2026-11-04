@@ -28,6 +28,7 @@ import app.finance.core.ui.titleRu
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
+import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -367,6 +368,10 @@ class AssetsController(
     /** День начисления процентов вклада; пусто — упрощённый расчёт (F4.6, D-31). */
     fun setAccountInterestDay(text: String) = updateDialog { it.copy(interestDayText = text, error = null) }
 
+    /** Напоминать обновить остаток в конце месяца (D-34). */
+    fun setAccountMonthlyReminder(value: Boolean) =
+        updateDialog { it.copy(monthlyReminder = value, error = null) }
+
     /** Проценты в конце срока вместо ежемесячной капитализации (F4.6, D-32). */
     fun setAccountInterestAtMaturity(value: Boolean) =
         updateDialog { it.copy(interestAtMaturity = value, error = null) }
@@ -457,6 +462,7 @@ class AssetsController(
                             } else {
                                 DepositCapitalization.MONTHLY
                             },
+                            monthlyReminder = dialog.monthlyReminder,
                             initialBalance = initialBalance,
                             note = note,
                         ),
@@ -674,11 +680,24 @@ class AssetsController(
         accounts: List<AssetAccount>,
         values: Map<String, AccountBalance>,
     ): AssetReminder? {
-        val drafts = values.values.filter { it.source.isDraft }
-        if (drafts.isEmpty()) return null
-
         val byId = accounts.associateBy { it.id }
-        val items = drafts.mapNotNull { value ->
+        val drafts = values.values.filter { it.source.isDraft }
+        // Счета с напоминанием (D-34): остаток за месяц не введён, а месяц уже подходит к
+        // концу или прошёл. Их значение учитывается по правилу категории, плашка лишь
+        // просит сверить его с банком.
+        val due = if (isReminderDue(period)) {
+            values.values.filter { value ->
+                byId[value.accountId]?.monthlyReminder == true &&
+                    !value.source.isDraft &&
+                    value.source != BalanceSource.RECORDED &&
+                    value.balance != null
+            }
+        } else {
+            emptyList()
+        }
+        if (drafts.isEmpty() && due.isEmpty()) return null
+
+        val items = (drafts + due).mapNotNull { value ->
             val account = byId[value.accountId] ?: return@mapNotNull null
             val balance = value.balance ?: return@mapNotNull null
             val basedOn = value.basedOnPeriod ?: return@mapNotNull null
@@ -693,13 +712,35 @@ class AssetsController(
         if (items.isEmpty()) return null
 
         val count = items.size
+        val title = if (drafts.isEmpty()) "Обновите остаток" else "Обновите стоимость"
+        val detail = when {
+            due.isEmpty() -> "Значения перенесены с прошлых месяцев и не учитываются в Net Worth, " +
+                "пока вы их не подтвердите"
+            drafts.isEmpty() -> "Остаток за месяц не введён — сверьте его с банком. " +
+                "Пока учитывается перенесённое значение"
+            else -> "Значения перенесены с прошлых месяцев. Черновики не учитываются в Net Worth, " +
+                "пока вы их не подтвердите; остальные сверьте с банком"
+        }
         return AssetReminder(
             period = period,
-            title = "Обновите стоимость: $count ${accountsWord(count)} за ${period.titleRu()}",
-            detail = "Значения перенесены с прошлых месяцев и не учитываются в Net Worth, " +
-                "пока вы их не подтвердите",
+            title = "$title: $count ${accountsWord(count)} за ${period.titleRu()}",
+            detail = detail,
             accounts = items,
         )
+    }
+
+    /**
+     * Пора ли напоминать об остатке за [period] (D-34): прошедший месяц — всегда, текущий —
+     * в последние [REMINDER_DAYS] дней, будущий — никогда: остаток на его конец ещё неизвестен.
+     */
+    private fun isReminderDue(period: Period): Boolean {
+        val today = LocalDate.now(clock.withZone(zone))
+        val current = Period(today.year, today.monthValue)
+        return when {
+            period < current -> true
+            period > current -> false
+            else -> today.dayOfMonth > today.lengthOfMonth() - REMINDER_DAYS
+        }
     }
 
     private fun headerOf(totals: AssetTotals, accountCount: Int): NetWorthHeader {
@@ -845,6 +886,9 @@ class AssetsController(
         const val TEN = 10
         const val ELEVEN = 11
         const val FOURTEEN = 14
+
+        /** Сколько последних дней месяца напоминать об остатке (D-34). */
+        const val REMINDER_DAYS = 7
     }
 }
 

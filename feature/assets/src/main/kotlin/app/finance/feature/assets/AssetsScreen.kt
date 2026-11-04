@@ -586,6 +586,26 @@ private fun AccountDialog(
                         }
                     }
                 }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable {
+                        controller.setAccountMonthlyReminder(!dialog.monthlyReminder)
+                    },
+                ) {
+                    Checkbox(
+                        checked = dialog.monthlyReminder,
+                        onCheckedChange = controller::setAccountMonthlyReminder,
+                    )
+                    Column {
+                        Text("Напоминать обновить остаток", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "В последнюю неделю месяца, пока остаток за месяц не введён, " +
+                                "счёт появится в плашке «Обновите остаток».",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedColor,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = dialog.noteText,
                     onValueChange = controller::setAccountNote,

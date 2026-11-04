@@ -214,6 +214,7 @@ class SqlSyncStore(
             term_months = account.termMonths?.toLong(),
             interest_day = account.interestDay?.toLong(),
             capitalization = account.capitalization.name,
+            monthly_reminder = account.monthlyReminder,
         )
     }
 
@@ -233,6 +234,7 @@ class SqlSyncStore(
             term_months = account.termMonths?.toLong(),
             interest_day = account.interestDay?.toLong(),
             capitalization = account.capitalization.name,
+            monthly_reminder = account.monthlyReminder,
             id = account.id,
         )
     }

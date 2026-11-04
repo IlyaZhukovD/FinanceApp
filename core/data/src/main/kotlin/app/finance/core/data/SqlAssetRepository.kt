@@ -59,6 +59,7 @@ class SqlAssetRepository(
             term_months = account.termMonths?.toLong(),
             interest_day = account.interestDay?.toLong(),
             capitalization = account.capitalization.name,
+            monthly_reminder = account.monthlyReminder,
         )
         enqueue(ENTITY_ACCOUNT, account.id, OPERATION_CREATE, account.rowVersion, account.updatedAtUtc)
     }
@@ -77,6 +78,7 @@ class SqlAssetRepository(
             term_months = account.termMonths?.toLong(),
             interest_day = account.interestDay?.toLong(),
             capitalization = account.capitalization.name,
+            monthly_reminder = account.monthlyReminder,
             updated_at_utc = account.updatedAtUtc,
             id = account.id,
         )

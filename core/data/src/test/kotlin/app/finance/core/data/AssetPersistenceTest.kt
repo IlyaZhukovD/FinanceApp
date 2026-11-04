@@ -129,6 +129,7 @@ class AssetPersistenceTest {
             termMonths = 3,
             interestDay = 8,
             capitalization = DepositCapitalization.AT_MATURITY,
+            monthlyReminder = true,
             createdAtUtc = 1,
             updatedAtUtc = 1,
         )
@@ -137,6 +138,7 @@ class AssetPersistenceTest {
         val stored = assets.accountById("yandex")
         assertEquals(8, stored?.interestDay)
         assertEquals(DepositCapitalization.AT_MATURITY, stored?.capitalization)
+        assertEquals(true, stored?.monthlyReminder)
 
         assets.updateAccount(account.copy(capitalization = DepositCapitalization.MONTHLY, updatedAtUtc = 2))
         assertEquals(DepositCapitalization.MONTHLY, assets.accountById("yandex")?.capitalization)

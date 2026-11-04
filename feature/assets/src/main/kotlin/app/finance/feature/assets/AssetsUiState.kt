@@ -202,6 +202,8 @@ data class AccountDialogState(
     val interestDayText: String = "",
     /** Проценты выплачиваются в конце срока, а не прибавляются каждый месяц (D-32). */
     val interestAtMaturity: Boolean = false,
+    /** Напоминать обновить остаток в конце месяца (D-34). */
+    val monthlyReminder: Boolean = false,
     /** Сумма, положенная на счёт при открытии: создаёт первый остаток месяца (D-21). */
     val initialBalanceText: String = "",
     val noteText: String = "",

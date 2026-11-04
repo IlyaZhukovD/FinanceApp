@@ -42,6 +42,12 @@ data class AssetAccount(
      * проценты на сумму вклада, и до конца срока они в остаток не входят.
      */
     val capitalization: DepositCapitalization = DepositCapitalization.MONTHLY,
+    /**
+     * Напоминать обновить остаток в конце месяца (D-34): пока за месяц не введён остаток,
+     * экран активов показывает счёт в плашке «Обновите остаток». На расчёт значения
+     * месяца флаг не влияет — его по-прежнему задаёт правило категории.
+     */
+    val monthlyReminder: Boolean = false,
     val note: String? = null,
     val createdAtUtc: Long,
     val updatedAtUtc: Long,

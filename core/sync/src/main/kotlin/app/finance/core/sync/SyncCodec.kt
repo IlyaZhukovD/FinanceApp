@@ -149,6 +149,7 @@ object SyncCodec {
             put("termMonths", a.termMonths)
             put("interestDay", a.interestDay)
             put("capitalization", a.capitalization.name)
+            put("monthlyReminder", a.monthlyReminder)
             put("note", a.note)
             putMeta(a.createdAtUtc, a.updatedAtUtc, a.rowVersion, a.deletedAtUtc)
         }
@@ -219,6 +220,8 @@ object SyncCodec {
                 termMonths = o.intOrNull("termMonths"),
                 interestDay = o.intOrNull("interestDay"),
                 capitalization = DepositCapitalization.fromDb(o.strOrNull("capitalization")),
+                // Пакет старой версии поля не знает — напоминания нет.
+                monthlyReminder = (o["monthlyReminder"] as? JsonPrimitive)?.booleanOrNull ?: false,
                 note = o.strOrNull("note"),
                 createdAtUtc = o.long("createdAtUtc"),
                 updatedAtUtc = o.long("updatedAtUtc"),

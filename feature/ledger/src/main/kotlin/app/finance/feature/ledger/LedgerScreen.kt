@@ -18,8 +18,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -28,9 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -46,6 +41,7 @@ import app.finance.core.ui.CheckboxRow
 import app.finance.core.ui.ConfirmDialog
 import app.finance.core.ui.DeltaText
 import app.finance.core.ui.EmptyStateCard
+import app.finance.core.ui.FinanceAutocomplete
 import app.finance.core.ui.FinanceCard
 import app.finance.core.ui.FinancePalette
 import app.finance.core.ui.FinanceRadius
@@ -214,9 +210,7 @@ private fun sectionDeltaColor(delta: Money?, section: LedgerSection): Color {
 @Composable
 private fun AmountInputForm(state: LedgerUiState, controller: LedgerController) {
     val form = state.form
-    var categoryPickerExpanded by remember { mutableStateOf(false) }
     val selectedCategory = state.categories.firstOrNull { it.id == form.categoryId }
-    val selectedCategoryName = selectedCategory?.name ?: "Категория"
 
     FinanceCard(modifier = Modifier.padding(horizontal = FinanceSpace.Lg)) {
         Row(
@@ -226,34 +220,19 @@ private fun AmountInputForm(state: LedgerUiState, controller: LedgerController) 
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(FinanceSpace.Md),
         ) {
-            // Категории и кнопке нужна та же вертикальная привязка, что и у полей:
-            // LabeledControl резервирует строку метки, поэтому все контролы формы стоят
-            // на одной линии, а не центрируются по блоку «метка + поле».
-            LabeledControl(label = "Категория") {
-                Box {
-                    SecondaryButton(
-                        text = selectedCategoryName,
-                        onClick = { categoryPickerExpanded = true },
-                        enabled = state.categories.isNotEmpty(),
-                        icon = selectedCategory?.let { category -> { CategoryDot(hexColor = category.color) } },
-                    )
-                    DropdownMenu(
-                        expanded = categoryPickerExpanded,
-                        onDismissRequest = { categoryPickerExpanded = false },
-                    ) {
-                        state.categories.forEach { category ->
-                            DropdownMenuItem(
-                                text = { Text(category.name) },
-                                leadingIcon = { CategoryDot(hexColor = category.color) },
-                                onClick = {
-                                    controller.selectCategory(category.id)
-                                    categoryPickerExpanded = false
-                                },
-                            )
-                        }
-                    }
-                }
-            }
+            // Категория с автодополнением (F1.4, D-35): начинаешь печатать — подсказки
+            // появляются сразу, Enter выбирает и переводит фокус на сумму.
+            FinanceAutocomplete(
+                label = "Категория",
+                options = state.categories,
+                selected = selectedCategory,
+                optionLabel = { it.name },
+                onPick = { controller.selectCategory(it.id) },
+                modifier = Modifier.width(260.dp),
+                placeholder = "Начните вводить…",
+                enabled = state.categories.isNotEmpty(),
+                optionIcon = { CategoryDot(hexColor = it.color) },
+            )
 
             FinanceTextField(
                 value = form.amountText,

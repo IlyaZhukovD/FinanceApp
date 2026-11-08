@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -231,8 +234,114 @@ fun FinanceTextField(
     singleLine: Boolean = true,
     textAlign: TextAlign = TextAlign.Start,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    // Многострочное поле растёт по содержимому, однострочное держит высоту контрола.
+    val multiline = !singleLine
+    FieldShell(
+        label = label,
+        enabled = enabled,
+        isError = isError,
+        supportingText = supportingText,
+        interactionSource = interactionSource,
+        modifier = modifier,
+        multiline = multiline,
+    ) { frame ->
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = frame,
+            enabled = enabled,
+            singleLine = singleLine,
+            minLines = minLines,
+            maxLines = maxLines,
+            textStyle = fieldTextStyle(enabled, textAlign),
+            cursorBrush = SolidColor(FinancePalette.Primary),
+            keyboardOptions = keyboardOptions,
+            interactionSource = interactionSource,
+            decorationBox = { innerTextField ->
+                FieldDecoration(
+                    isEmpty = value.isEmpty(),
+                    placeholder = placeholder,
+                    textAlign = textAlign,
+                    leading = null,
+                    multiline = multiline,
+                    innerTextField = innerTextField,
+                )
+            },
+        )
+    }
+}
+
+/**
+ * То же поле, но на [TextFieldValue]: вызывающему нужно управлять выделением и курсором —
+ * например, [FinanceAutocomplete] выделяет весь текст при фокусе, чтобы первая же буква
+ * заменила прежнее значение. [leading] — значок слева от текста (цвет категории).
+ */
+@Composable
+fun FinanceTextField(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    placeholder: String = "",
+    isError: Boolean = false,
+    supportingText: String? = null,
+    enabled: Boolean = true,
+    textAlign: TextAlign = TextAlign.Start,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    leading: (@Composable () -> Unit)? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    FieldShell(
+        label = label,
+        enabled = enabled,
+        isError = isError,
+        supportingText = supportingText,
+        interactionSource = interactionSource,
+        modifier = modifier,
+    ) { frame ->
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = frame,
+            enabled = enabled,
+            singleLine = true,
+            textStyle = fieldTextStyle(enabled, textAlign),
+            cursorBrush = SolidColor(FinancePalette.Primary),
+            keyboardOptions = keyboardOptions,
+            interactionSource = interactionSource,
+            decorationBox = { innerTextField ->
+                FieldDecoration(
+                    isEmpty = value.text.isEmpty(),
+                    placeholder = placeholder,
+                    textAlign = textAlign,
+                    leading = leading,
+                    innerTextField = innerTextField,
+                )
+            },
+        )
+    }
+}
+
+/**
+ * Общая оболочка полей ввода: подпись сверху, рамка с hover/фокусом/ошибкой, подсказка снизу.
+ * Само поле рисует вызывающий, применяя к нему переданный модификатор рамки, — так у
+ * строкового поля и поля на [TextFieldValue] один внешний вид без копипасты (D-17).
+ */
+@Composable
+private fun FieldShell(
+    label: String?,
+    enabled: Boolean,
+    isError: Boolean,
+    supportingText: String?,
+    interactionSource: MutableInteractionSource,
+    modifier: Modifier,
+    multiline: Boolean = false,
+    field: @Composable (frame: Modifier) -> Unit,
+) {
     val focused by interactionSource.collectIsFocusedAsState()
     val hovered by interactionSource.collectIsHoveredAsState()
 
@@ -266,43 +375,19 @@ fun FinanceTextField(
             }
         }
 
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier
+        field(
+            Modifier
                 .fillMaxWidth()
-                .height(FinanceSize.ControlHeight)
+                .then(
+                    if (multiline) {
+                        Modifier.heightIn(min = FinanceSize.ControlHeight)
+                    } else {
+                        Modifier.height(FinanceSize.ControlHeight)
+                    },
+                )
                 .background(FinancePalette.Background, shape = FinanceRadius.controlShape)
                 .border(width = if (focused) 1.5.dp else 1.dp, color = borderColor, shape = FinanceRadius.controlShape)
-                .padding(horizontal = FinanceSpace.Md),
-            enabled = enabled,
-            singleLine = singleLine,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                color = if (enabled) FinancePalette.TextPrimary else FinancePalette.TextDisabled,
-                textAlign = textAlign,
-            ),
-            cursorBrush = SolidColor(FinancePalette.Primary),
-            keyboardOptions = keyboardOptions,
-            interactionSource = interactionSource,
-            decorationBox = { innerTextField ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(FinanceSize.ControlHeight),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        if (value.isEmpty()) {
-                            Text(
-                                text = placeholder,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = FinancePalette.TextDisabled,
-                                textAlign = textAlign,
-                                maxLines = 1,
-                            )
-                        }
-                        innerTextField()
-                    }
-                }
-            },
+                .padding(horizontal = FinanceSpace.Md, vertical = if (multiline) FinanceSpace.Sm else 0.dp),
         )
 
         if (supportingText != null) {
@@ -312,6 +397,47 @@ fun FinanceTextField(
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isError) FinancePalette.Error else FinancePalette.TextSecondary,
             )
+        }
+    }
+}
+
+@Composable
+private fun fieldTextStyle(enabled: Boolean, textAlign: TextAlign): TextStyle =
+    MaterialTheme.typography.bodyMedium.copy(
+        color = if (enabled) FinancePalette.TextPrimary else FinancePalette.TextDisabled,
+        textAlign = textAlign,
+    )
+
+@Composable
+private fun FieldDecoration(
+    isEmpty: Boolean,
+    placeholder: String,
+    textAlign: TextAlign,
+    leading: (@Composable () -> Unit)?,
+    innerTextField: @Composable () -> Unit,
+    multiline: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().then(
+            if (multiline) Modifier else Modifier.height(FinanceSize.ControlHeight),
+        ),
+        verticalAlignment = if (multiline) Alignment.Top else Alignment.CenterVertically,
+    ) {
+        if (leading != null) {
+            leading()
+            Spacer(modifier = Modifier.width(FinanceSpace.Sm))
+        }
+        Box(modifier = Modifier.weight(1f)) {
+            if (isEmpty) {
+                Text(
+                    text = placeholder,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FinancePalette.TextDisabled,
+                    textAlign = textAlign,
+                    maxLines = 1,
+                )
+            }
+            innerTextField()
         }
     }
 }

@@ -60,4 +60,25 @@ class CommentMergerTest {
         assertEquals(2, CommentMerger.lineCount("Первая\nВторая"))
         assertEquals(3, CommentMerger.lineCount("Первая\nВторая\nТретья"))
     }
+
+    @Test
+    fun `addedPart возвращает только дописанную строку`() {
+        val merged = CommentMerger.merge("Курс по Kotlin", "занятие по сварке")
+        assertEquals("занятие по сварке", CommentMerger.addedPart("Курс по Kotlin", merged))
+        val third = CommentMerger.merge(merged, "книга")
+        assertEquals("книга", CommentMerger.addedPart(merged, third))
+    }
+
+    @Test
+    fun `addedPart без изменения текста даёт null`() {
+        assertNull(CommentMerger.addedPart("Отпуск", "Отпуск"))
+        assertNull(CommentMerger.addedPart(null, null))
+        assertNull(CommentMerger.addedPart("Отпуск", null))
+    }
+
+    @Test
+    fun `addedPart при первом комментарии и перезаписи отдаёт текст целиком`() {
+        assertEquals("Отпуск", CommentMerger.addedPart(null, "Отпуск"))
+        assertEquals("Новый", CommentMerger.addedPart("Старый", "Новый"))
+    }
 }

@@ -34,6 +34,24 @@ object CommentMerger {
     /** Явная перезапись комментария пользователем: слияние не применяется. */
     fun replace(comment: String?): String? = comment?.trim()?.ifEmpty { null }
 
+    /**
+     * Текст, который внесла одна операция: обратная к [merge] сторона.
+     *
+     * Ячейка хранит накопленный комментарий, а в истории изменений нужно видеть, что
+     * пришло именно с этим вводом. Если [after] — это [before] с дописанной строкой,
+     * возвращается только дописанный хвост; если текст не изменился — null; при
+     * любой другой перемене (перезапись, первый комментарий) — [after] целиком.
+     */
+    fun addedPart(before: String?, after: String?): String? {
+        val previous = before?.trim().orEmpty()
+        val current = after?.trim().orEmpty()
+        if (current.isEmpty() || current == previous) return null
+        if (previous.isNotEmpty() && current.startsWith(previous + LINE_SEPARATOR)) {
+            return current.substring(previous.length + LINE_SEPARATOR.length).trim().ifEmpty { null }
+        }
+        return current
+    }
+
     /** Число накопленных строк — для индикатора в списке и усечения в таблице. */
     fun lineCount(comment: String?): Int =
         comment?.split(LINE_SEPARATOR)?.count { it.isNotBlank() } ?: 0

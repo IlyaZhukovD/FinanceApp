@@ -444,6 +444,11 @@ private fun CellPanel(panel: CellPanelState, controller: LedgerController) {
                     label = "Комментарий",
                     placeholder = "Необязательно",
                     modifier = Modifier.fillMaxWidth(),
+                    // Накопленный комментарий многострочный (F1.5): каждое добавление — своя строка.
+                    // Высота следует за текстом: одна строка для пустого поля, рост при вводе,
+                    // дальше 10 строк — прокрутка внутри поля.
+                    singleLine = false,
+                    maxLines = 10,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(FinanceSpace.Sm)) {
                     PrimaryButton(

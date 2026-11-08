@@ -3,6 +3,7 @@ package app.finance.feature.ledger
 import app.finance.core.domain.AmountInput
 import app.finance.core.domain.CategoryRepository
 import app.finance.core.domain.CommentChange
+import app.finance.core.domain.CommentMerger
 import app.finance.core.domain.ConflictPolicy
 import app.finance.core.domain.DeleteCell
 import app.finance.core.domain.DuplicateOptions
@@ -514,9 +515,18 @@ class LedgerController(
         operationLabel = operationLabel(revision.op),
         amountLabel = revision.amountAfter.formatRu(),
         deltaLabel = revision.delta?.takeIf { !it.isZero() }?.formatSignedRu(),
-        commentLabel = revision.commentAfter?.takeIf { it.isNotBlank() },
+        commentLabel = revisionComment(revision),
         createdAtLabel = formatTimestamp(revision.createdAtUtc, zone),
     )
+
+    /**
+     * Комментарий записи истории — текст именно этой операции, а не весь накопленный
+     * комментарий ячейки: так у каждого «Прибавлено» видна своя строка.
+     */
+    private fun revisionComment(revision: CategoryMonthRevision): String? = when (revision.op) {
+        RevisionOp.SET_COMMENT -> CommentMerger.replace(revision.commentAfter) ?: "Комментарий удалён"
+        else -> CommentMerger.addedPart(revision.commentBefore, revision.commentAfter)
+    }
 
     private fun operationLabel(op: RevisionOp): String = when (op) {
         RevisionOp.CREATE -> "Создано"

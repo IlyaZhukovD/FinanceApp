@@ -54,6 +54,8 @@ import app.finance.feature.sync.SyncSettingsCard
 import app.finance.feature.sync.syncStatusLine
 import app.finance.feature.settings.SettingsScreen
 import java.nio.file.Paths
+import javax.swing.JOptionPane
+import javax.swing.SwingUtilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -72,8 +74,21 @@ import kotlinx.coroutines.withContext
  * (`SettingsStore` в `core:data`): там лежит список баз и активная. Настройки живут вне
  * баз данных, поэтому переключение между «своими» данными и тестовой базой обратимо и не
  * зависит от содержимого ни одной из них.
+ *
+ * Второй экземпляр не запускается (D-36): он просит уже открытое окно выйти на передний план
+ * и завершается, не трогая базу.
  */
-fun main() = application {
+fun main() {
+    val instance = SingleInstance.acquire(AppDataLocations.directory()) { delivered ->
+        // Окно не отозвалось (первый экземпляр ещё стартует) — объясняем, почему ничего не открылось.
+        if (!delivered) {
+            JOptionPane.showMessageDialog(null, "Finance уже запущен.", "Finance", JOptionPane.INFORMATION_MESSAGE)
+        }
+    } ?: return
+    runApplication(instance)
+}
+
+private fun runApplication(instance: SingleInstance) = application {
     val windowState = rememberWindowState(width = 1240.dp, height = 800.dp)
     val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
 
@@ -132,6 +147,23 @@ fun main() = application {
         // Запуск из исходников подписан: у него своя база (D-28), и окна легко перепутать.
         title = if (AppDataLocations.isPackaged) "Finance" else "Finance — разработка",
     ) {
+        // Повторный запуск приложения показывает это окно (D-36).
+        DisposableEffect(window) {
+            instance.onActivate {
+                SwingUtilities.invokeLater {
+                    windowState.isMinimized = false
+                    window.isVisible = true
+                    // Windows не отдаёт фокус фоновому процессу: без кратковременного
+                    // «поверх всех» toFront() лишь подсвечивает кнопку на панели задач.
+                    window.isAlwaysOnTop = true
+                    window.toFront()
+                    window.isAlwaysOnTop = false
+                    window.requestFocus()
+                }
+            }
+            onDispose { instance.onActivate {} }
+        }
+
         // Системное меню (SPEC.md §10). Пока в нём только импорт: остальные пункты появятся
         // вместе с бэкапом и экспортом (M6, M7).
         // Меню объявляется сразу, до открытия базы: полоса меню, добавленная в уже
